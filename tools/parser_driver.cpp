@@ -54,5 +54,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    return parser.getNumberOfSyntaxErrors() > 0 ? 1 : 0;
+    bool syntaxError = parser.getNumberOfSyntaxErrors() > 0;
+    bool leftover = parser.getCurrentToken()->getType() != antlr4::Token::EOF;
+    return (syntaxError || leftover) ? 1 : 0;
 }

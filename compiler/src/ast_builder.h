@@ -123,5 +123,9 @@ namespace rx
             rxgrammar::RxParser::ConditionPrimaryContext* ctx);
         std::unique_ptr<Expr> buildConditionPrimaryWithoutBareBlock(
             rxgrammar::RxParser::ConditionPrimaryWithoutBareBlockContext* ctx);
+
+        std::unique_ptr<Type> buildTypeRef(rxgrammar::RxParser::TypeRefContext* ctx);
+        std::unique_ptr<Expr> buildConstValue(rxgrammar::RxParser::ConstValueContext* ctx);
+        std::unique_ptr<Expr> buildMagnitude(rxgrammar::RxParser::MagnitudeContext* ctx);
     };
 }
