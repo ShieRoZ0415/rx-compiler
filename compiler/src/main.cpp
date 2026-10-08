@@ -23,7 +23,7 @@ void printType(const rx::Type* type, int indent) {
         break;
     case rx::TypeKind::Reference:
         std::cout << pad << "Type: &" << (type->isMutable ? "mut " : "")
-                  << "[Reference]\n";
+            << "[Reference]\n";
         printType(type->inner.get(), indent + 2);
         break;
     case rx::TypeKind::Array:
@@ -40,11 +40,12 @@ void printBlock(const rx::Block* block, int indent) {
     for (const auto& stmt : block->statements) {
         if (stmt->kind == rx::StmtKind::Let) {
             std::cout << std::string(indent, ' ') << "Let: " << stmt->name
-                      << (stmt->isMutable ? " (mut)" : "")
-                      << " : " << stmt->typeName << "\n";
+                << (stmt->isMutable ? " (mut)" : "")
+                << " : " << stmt->typeName << "\n";
             printType(stmt->type.get(), indent + 2);
             printExpr(stmt->expression.get(), indent + 2);
-        } else if (stmt->expression) {
+        }
+        else if (stmt->expression) {
             std::cout << std::string(indent, ' ') << "Statement\n";
             printExpr(stmt->expression.get(), indent + 2);
         }
@@ -121,8 +122,8 @@ void printExpr(const rx::Expr* expr, int indent) {
         std::cout << "Struct: " << expr->text << "\n";
         for (size_t i = 0; i < expr->operands.size(); ++i) {
             std::cout << std::string(indent + 2, ' ') << "Field: "
-                      << (i < expr->fieldNames.size() ? expr->fieldNames[i] : "?")
-                      << "\n";
+                << (i < expr->fieldNames.size() ? expr->fieldNames[i] : "?")
+                << "\n";
             printExpr(expr->operands[i].get(), indent + 4);
         }
         break;
@@ -179,9 +180,9 @@ void printItem(const rx::Item* item, int indent) {
         if (!fn->whereClause.empty()) std::cout << pad << "  where " << fn->whereClause << "\n";
         for (const auto& p : fn->parameters) {
             std::cout << pad << "  param: " << p.name
-                      << (p.isSelf ? " (self)" : "")
-                      << " : " << p.typeName
-                      << (p.isMutable ? " [mut]" : "") << "\n";
+                << (p.isSelf ? " (self)" : "")
+                << " : " << p.typeName
+                << (p.isMutable ? " [mut]" : "") << "\n";
             printType(p.type.get(), indent + 4);
         }
         std::cout << pad << "  returns: " << fn->resultType << "\n";
@@ -224,7 +225,8 @@ int main(int argc, char** argv) {
             std::istreambuf_iterator<char>(in),
             std::istreambuf_iterator<char>()
         );
-    } else {
+    }
+    else {
         code = R"(
 fn main() {
     let x = 1 + 2 * 3;

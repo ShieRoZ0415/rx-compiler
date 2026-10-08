@@ -24,9 +24,9 @@ namespace rx
     };
 
     struct Type {
-        TypeKind kind=TypeKind::Unit;
+        TypeKind kind = TypeKind::Unit;
         std::string path;
-        bool isMutable=false;
+        bool isMutable = false;
         std::string arrayLength;
         std::unique_ptr<Type> inner;
         std::unique_ptr<Type> element;
@@ -71,13 +71,13 @@ namespace rx
     };
 
     struct Stmt {
-        StmtKind kind=StmtKind::Empty;
+        StmtKind kind = StmtKind::Empty;
         std::string name;
-        bool isMutable=false;
+        bool isMutable = false;
         std::string typeName;
         std::unique_ptr<Type> type;
         std::unique_ptr<Expr> expression;
-        bool hasSemicolon=true;
+        bool hasSemicolon = true;
     };
 
     struct Block {
@@ -88,8 +88,8 @@ namespace rx
     struct FunctionParameter {
         std::string name;
         std::string typeName;
-        bool isMutable=false;
-        bool isSelf=false;
+        bool isMutable = false;
+        bool isSelf = false;
         std::unique_ptr<Type> type;
     };
 
@@ -99,7 +99,7 @@ namespace rx
         std::string resultType;
         std::unique_ptr<Type> result;
         std::unique_ptr<Block> body;
-        bool hasSelfParam=false;
+        bool hasSelfParam = false;
         std::string genericParams;
         std::string whereClause;
     };
@@ -111,7 +111,7 @@ namespace rx
     };
 
     struct Item {
-        ItemKind kind=ItemKind::Use;
+        ItemKind kind = ItemKind::Use;
         std::string name;
         std::string text;
         std::string genericParams;

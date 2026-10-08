@@ -16,155 +16,163 @@ namespace rx
     }
 
     std::unique_ptr<Item> ASTBuilder::buildItem(rxgrammar::RxParser::ItemContext* ctx) {
-    auto item=std::make_unique<Item>();
+        auto item = std::make_unique<Item>();
 
-    auto buildFunction=[&](rxgrammar::RxParser::FunctionDefinitionContext* f)->std::unique_ptr<Function> {
-        auto fn=std::make_unique<Function>();
-        fn->name=f->identifier()->getText();
-        if (f->genericParams()) fn->genericParams=f->genericParams()->getText();
+        auto buildFunction = [&](rxgrammar::RxParser::FunctionDefinitionContext* f)-> std::unique_ptr<Function>
+        {
+            auto fn = std::make_unique<Function>();
+            fn->name = f->identifier()->getText();
+            if (f->genericParams()) fn->genericParams = f->genericParams()->getText();
 
-        if (f->whereClause()) fn->whereClause=f->whereClause()->getText();
+            if (f->whereClause()) fn->whereClause = f->whereClause()->getText();
 
-        if (f->functionParameters()) {
-            auto* ps=f->functionParameters();
+            if (f->functionParameters()) {
+                auto* ps = f->functionParameters();
 
-            if (ps->selfParam()) {
-                auto* sp=ps->selfParam();
-                FunctionParameter p;
-                p.name="self";
-                p.typeName=sp->getText();
-                p.isSelf=true;
-                p.isMutable=sp->MUT()!=nullptr;
+                if (ps->selfParam()) {
+                    auto* sp = ps->selfParam();
+                    FunctionParameter p;
+                    p.name = "self";
+                    p.typeName = sp->getText();
+                    p.isSelf = true;
+                    p.isMutable = sp->MUT() != nullptr;
 
-                if (sp->AMP()) {
-                    p.type=std::make_unique<Type>();
-                    p.type->kind=TypeKind::Reference;
-                    p.type->isMutable=p.isMutable;
-                    p.type->inner=std::make_unique<Type>();
-                    p.type->inner->kind=TypeKind::Unit;
+                    if (sp->AMP()) {
+                        p.type = std::make_unique<Type>();
+                        p.type->kind = TypeKind::Reference;
+                        p.type->isMutable = p.isMutable;
+                        p.type->inner = std::make_unique<Type>();
+                        p.type->inner->kind = TypeKind::Unit;
+                    }
+                    fn->parameters.push_back(std::move(p));
+                    fn->hasSelfParam = true;
                 }
-                fn->parameters.push_back(std::move(p));
-                fn->hasSelfParam=true;
+
+                for (auto* pc : ps->functionParam()) {
+                    FunctionParameter p;
+                    p.name = pc->identifierBinding()->identifier()->getText();
+                    p.isMutable = pc->identifierBinding()->MUT() != nullptr;
+                    p.typeName = pc->typeRef()->getText();
+                    p.type = buildTypeRef(pc->typeRef());
+                    fn->parameters.push_back(std::move(p));
+                }
             }
 
-            for (auto* pc:ps->functionParam()) {
-                FunctionParameter p;
-                p.name=pc->identifierBinding()->identifier()->getText();
-                p.isMutable=pc->identifierBinding()->MUT()!=nullptr;
-                p.typeName=pc->typeRef()->getText();
-                p.type=buildTypeRef(pc->typeRef());
-                fn->parameters.push_back(std::move(p));
+            if (f->typeRef()) {
+                fn->resultType = f->typeRef()->getText();
+                fn->result = buildTypeRef(f->typeRef());
+            }
+            else {
+                fn->resultType = "()";
+                fn->result = std::make_unique<Type>();
+                fn->result->kind = TypeKind::Unit;
+            }
+
+            fn->body = buildBlock(f->blockExpression());
+            return fn;
+        };
+
+        auto buildConstant = [&](rxgrammar::RxParser::ConstantItemContext* c)-> std::unique_ptr<Item>
+        {
+            auto x = std::make_unique<Item>();
+            x->kind = ItemKind::Constant;
+            x->name = c->identifier()->getText();
+            x->type = buildTypeRef(c->typeRef());
+            x->value = buildConstValue(c->constValue());
+            return x;
+        };
+
+        if (ctx->useDeclaration()) {
+            item->kind = ItemKind::Use;
+            item->name = ctx->useDeclaration()->useTree()->getText();
+            item->text = ctx->useDeclaration()->getText();
+        }
+        else if (ctx->functionDefinition()) {
+            item->kind = ItemKind::Function;
+            item->name = ctx->functionDefinition()->identifier()->getText();
+            item->function = buildFunction(ctx->functionDefinition());
+        }
+        else if (ctx->structDefinition()) {
+            auto* s = ctx->structDefinition();
+            item->kind = ItemKind::Struct;
+            item->name = s->identifier()->getText();
+            if (s->genericParams()) item->genericParams = s->genericParams()->getText();
+            if (s->whereClause()) item->whereClause = s->whereClause()->getText();
+            for (auto* a : s->outerAttribute()) item->attributes.push_back(a->getText());
+            for (auto* f : s->structField()) {
+                StructField field;
+                field.name = f->identifier()->getText();
+                field.typeName = f->typeRef()->getText();
+                field.type = buildTypeRef(f->typeRef());
+                item->fields.push_back(std::move(field));
+            }
+        }
+        else if (ctx->constantItem()) {
+            item = buildConstant(ctx->constantItem());
+        }
+        else if (ctx->inherentImpl()) {
+            auto* impl = ctx->inherentImpl();
+            item->kind = ItemKind::Impl;
+            item->type = buildTypeRef(impl->typeRef());
+            if (impl->genericParams()) item->genericParams = impl->genericParams()->getText();
+            if (impl->whereClause()) item->whereClause = impl->whereClause()->getText();
+            item->name = impl->typeRef()->getText();
+            for (auto* a : impl->associatedItem()) {
+                if (a->constantItem()) {
+                    item->associatedItems.push_back(buildConstant(a->constantItem()));
+                }
+                else if (a->functionDefinition()) {
+                    auto child = std::make_unique<Item>();
+                    child->kind = ItemKind::Function;
+                    child->name = a->functionDefinition()->identifier()->getText();
+                    child->function = buildFunction(a->functionDefinition());
+                    item->associatedItems.push_back(std::move(child));
+                }
             }
         }
 
-        if (f->typeRef()) {
-            fn->resultType=f->typeRef()->getText();
-            fn->result=buildTypeRef(f->typeRef());
-        } else {
-            fn->resultType="()";
-            fn->result=std::make_unique<Type>();
-            fn->result->kind=TypeKind::Unit;
-        }
-
-        fn->body=buildBlock(f->blockExpression());
-        return fn;
-    };
-
-    auto buildConstant=[&](rxgrammar::RxParser::ConstantItemContext* c)->std::unique_ptr<Item> {
-        auto x=std::make_unique<Item>();
-        x->kind=ItemKind::Constant;
-        x->name=c->identifier()->getText();
-        x->type=buildTypeRef(c->typeRef());
-        x->value=buildConstValue(c->constValue());
-        return x;
-    };
-
-    if (ctx->useDeclaration()) {
-        item->kind=ItemKind::Use;
-        item->name=ctx->useDeclaration()->useTree()->getText();
-        item->text=ctx->useDeclaration()->getText();
-    } else if (ctx->functionDefinition()) {
-        item->kind=ItemKind::Function;
-        item->name=ctx->functionDefinition()->identifier()->getText();
-        item->function=buildFunction(ctx->functionDefinition());
-    } else if (ctx->structDefinition()) {
-        auto* s=ctx->structDefinition();
-        item->kind=ItemKind::Struct;
-        item->name=s->identifier()->getText();
-        if (s->genericParams()) item->genericParams=s->genericParams()->getText();
-        if (s->whereClause()) item->whereClause=s->whereClause()->getText();
-        for (auto* a:s->outerAttribute()) item->attributes.push_back(a->getText());
-        for (auto* f:s->structField()) {
-            StructField field;
-            field.name=f->identifier()->getText();
-            field.typeName=f->typeRef()->getText();
-            field.type=buildTypeRef(f->typeRef());
-            item->fields.push_back(std::move(field));
-        }
-    } else if (ctx->constantItem()) {
-        item=buildConstant(ctx->constantItem());
-    } else if (ctx->inherentImpl()) {
-        auto* impl=ctx->inherentImpl();
-        item->kind=ItemKind::Impl;
-        item->type=buildTypeRef(impl->typeRef());
-        if (impl->genericParams()) item->genericParams=impl->genericParams()->getText();
-        if (impl->whereClause()) item->whereClause=impl->whereClause()->getText();
-        item->name=impl->typeRef()->getText();
-        for (auto* a:impl->associatedItem()) {
-            if (a->constantItem()) {
-                item->associatedItems.push_back(buildConstant(a->constantItem()));
-            } else if (a->functionDefinition()) {
-                auto child=std::make_unique<Item>();
-                child->kind=ItemKind::Function;
-                child->name=a->functionDefinition()->identifier()->getText();
-                child->function=buildFunction(a->functionDefinition());
-                item->associatedItems.push_back(std::move(child));
-            }
-        }
+        return item;
     }
-
-    return item;
-}
 
     std::unique_ptr<Type> ASTBuilder::buildTypeRef(rxgrammar::RxParser::TypeRefContext* ctx) {
         if (!ctx) return nullptr;
-        if (ctx->LPAREN()&&ctx->RPAREN()&&!ctx->typeRef()) {
-            auto type=std::make_unique<Type>();
-            type->kind=TypeKind::Unit;
+        if (ctx->LPAREN() && ctx->RPAREN() && !ctx->typeRef()) {
+            auto type = std::make_unique<Type>();
+            type->kind = TypeKind::Unit;
             return type;
         }
         if (ctx->typeRef()) return buildTypeRef(ctx->typeRef());
         if (ctx->typePath()) {
-            auto type=std::make_unique<Type>();
-            type->kind=TypeKind::Path;
-            type->path=ctx->typePath()->getText();
+            auto type = std::make_unique<Type>();
+            type->kind = TypeKind::Path;
+            type->path = ctx->typePath()->getText();
             return type;
         }
         if (ctx->referenceType()) {
-            auto* r=ctx->referenceType();
-            auto inner=buildTypeRef(r->typeRef());
+            auto* r = ctx->referenceType();
+            auto inner = buildTypeRef(r->typeRef());
             if (r->ANDAND()) {
-                auto innerRef=std::make_unique<Type>();
-                innerRef->kind=TypeKind::Reference;
-                innerRef->isMutable=r->MUT()!=nullptr;
-                innerRef->inner=std::move(inner);
-                auto outerRef=std::make_unique<Type>();
-                outerRef->kind=TypeKind::Reference;
-                outerRef->inner=std::move(innerRef);
+                auto innerRef = std::make_unique<Type>();
+                innerRef->kind = TypeKind::Reference;
+                innerRef->isMutable = r->MUT() != nullptr;
+                innerRef->inner = std::move(inner);
+                auto outerRef = std::make_unique<Type>();
+                outerRef->kind = TypeKind::Reference;
+                outerRef->inner = std::move(innerRef);
                 return outerRef;
             }
-            auto type=std::make_unique<Type>();
-            type->kind=TypeKind::Reference;
-            type->isMutable=r->MUT()!=nullptr;
-            type->inner=std::move(inner);
+            auto type = std::make_unique<Type>();
+            type->kind = TypeKind::Reference;
+            type->isMutable = r->MUT() != nullptr;
+            type->inner = std::move(inner);
             return type;
         }
         if (ctx->arrayType()) {
-            auto* a=ctx->arrayType();
-            auto type=std::make_unique<Type>();
-            type->kind=TypeKind::Array;
-            type->element=buildTypeRef(a->typeRef());
-            type->arrayLength=a->constValue()->getText();
+            auto* a = ctx->arrayType();
+            auto type = std::make_unique<Type>();
+            type->kind = TypeKind::Array;
+            type->element = buildTypeRef(a->typeRef());
+            type->arrayLength = a->constValue()->getText();
             return type;
         }
         return nullptr;
@@ -173,9 +181,9 @@ namespace rx
     std::unique_ptr<Expr> ASTBuilder::buildMagnitude(rxgrammar::RxParser::MagnitudeContext* ctx) {
         if (!ctx) return nullptr;
         if (ctx->INTEGER_LITERAL()) {
-            auto expr=std::make_unique<Expr>();
-            expr->kind=ExprKind::IntegerLiteral;
-            expr->text=ctx->INTEGER_LITERAL()->getText();
+            auto expr = std::make_unique<Expr>();
+            expr->kind = ExprKind::IntegerLiteral;
+            expr->text = ctx->INTEGER_LITERAL()->getText();
             return expr;
         }
         if (ctx->pathInExpression()) return buildPathInExpression(ctx->pathInExpression());
@@ -186,28 +194,28 @@ namespace rx
     std::unique_ptr<Expr> ASTBuilder::buildConstValue(rxgrammar::RxParser::ConstValueContext* ctx) {
         if (!ctx) return nullptr;
         if (ctx->INTEGER_LITERAL()) {
-            auto expr=std::make_unique<Expr>();
-            expr->kind=ExprKind::IntegerLiteral;
-            expr->text=ctx->INTEGER_LITERAL()->getText();
+            auto expr = std::make_unique<Expr>();
+            expr->kind = ExprKind::IntegerLiteral;
+            expr->text = ctx->INTEGER_LITERAL()->getText();
             return expr;
         }
         if (ctx->TRUE()) {
-            auto expr=std::make_unique<Expr>();
-            expr->kind=ExprKind::BooleanLiteral;
-            expr->text="true";
+            auto expr = std::make_unique<Expr>();
+            expr->kind = ExprKind::BooleanLiteral;
+            expr->text = "true";
             return expr;
         }
         if (ctx->FALSE()) {
-            auto expr=std::make_unique<Expr>();
-            expr->kind=ExprKind::BooleanLiteral;
-            expr->text="false";
+            auto expr = std::make_unique<Expr>();
+            expr->kind = ExprKind::BooleanLiteral;
+            expr->text = "false";
             return expr;
         }
         if (ctx->pathInExpression()) return buildPathInExpression(ctx->pathInExpression());
         if (ctx->MINUS()) {
-            auto expr=std::make_unique<Expr>();
-            expr->kind=ExprKind::Unary;
-            expr->text="-";
+            auto expr = std::make_unique<Expr>();
+            expr->kind = ExprKind::Unary;
+            expr->text = "-";
             expr->operands.push_back(buildMagnitude(ctx->magnitude()));
             return expr;
         }
@@ -216,9 +224,9 @@ namespace rx
     }
 
     std::unique_ptr<Block> ASTBuilder::buildBlock(rxgrammar::RxParser::BlockExpressionContext* ctx) {
-        auto block=std::make_unique<Block>();
-        for (auto* statementCtx:ctx->statement()) block->statements.push_back(buildStatement(statementCtx));
-        if (ctx->statementExpression()) block->tail=buildStatementExpression(ctx->statementExpression());
+        auto block = std::make_unique<Block>();
+        for (auto* statementCtx : ctx->statement()) block->statements.push_back(buildStatement(statementCtx));
+        if (ctx->statementExpression()) block->tail = buildStatementExpression(ctx->statementExpression());
         return block;
     }
 
@@ -268,8 +276,8 @@ namespace rx
         stmt->expression = buildExpression(ctx->expression());
 
         if (ctx->typeRef()) {
-            stmt->typeName=ctx->typeRef()->getText();
-            stmt->type=buildTypeRef(ctx->typeRef());
+            stmt->typeName = ctx->typeRef()->getText();
+            stmt->type = buildTypeRef(ctx->typeRef());
         }
 
         return stmt;
@@ -1271,8 +1279,9 @@ namespace rx
 
         if (ctx->nonBlockPrimary()) {
             base = buildNonBlockPrimary(ctx->nonBlockPrimary());
-        } else {
-            base = buildExpressionWithBlock(ctx->expressionWithBlock());   // {p} 这类
+        }
+        else {
+            base = buildExpressionWithBlock(ctx->expressionWithBlock()); // {p} 这类
             if (!base) return nullptr;
 
             if (ctx->dotSuffix()) {
@@ -1296,7 +1305,8 @@ namespace rx
                     field->text = dot->identifier()->getText();
                     field->operands.push_back(std::move(base));
                     base = std::move(field);
-                } else return nullptr;
+                }
+                else return nullptr;
             }
         }
         if (!base) return nullptr;
