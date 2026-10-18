@@ -1,14 +1,10 @@
 # Fill in these four commands. See README.md for how to fill in this.
 
 # Optional: build your compiler once before testing. Leave empty if prebuilt.
-BUILD = CARGO_PROFILE_RELEASE_LTO=true cargo build --quiet --locked --release \
-    --manifest-path crates/rx/Cargo.toml \
-    --target-dir target/reference \
-    --target riscv32im-unknown-none-elf
+BUILD = cmake --build compiler/build
 
 # Required for semantic tests: exit 0 to accept {source}, 1 to reject it.
-SEMANTIC = RX_SOURCE={source} $(REFERENCE_RUSTC) --cfg rx_semantic \
-    --emit=metadata crates/rx/src/entry.rs -o {output}
+SEMANTIC = compiler/build/compiler --stage semantic {source}
 
 # Required for codegen/optimization tests: compile {source} into {output}.
 # To test LLVM IR, write RV32-compatible IR to {output}.ir and append:

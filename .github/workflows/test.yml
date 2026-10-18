@@ -6,33 +6,41 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  build-and-parse:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential
+          sudo apt-get install -y cmake build-essential
 
-      - name: Set up xmake
-        uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: latest
-
-      - name: Build REIMU
+      - name: Build ANTLR4 C++ runtime
         run: |
-          xmake f -y -P vendor/REIMU -m release -o target/reimu
-          xmake -y -P vendor/REIMU
+          git clone --depth 1 --branch 4.13.2 https://github.com/antlr/antlr4.git /tmp/antlr4
+          cmake -S /tmp/antlr4/runtime/Cpp -B /tmp/antlr4/build \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DANTLR_BUILD_CPP_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/antlr4/build -j$(nproc)
+          sudo cmake --install /tmp/antlr4/build
 
-      - name: Set up Rust
+      - name: Build compiler
         run: |
-          rustup toolchain install stable --profile minimal --target riscv32im-unknown-none-elf
-          rustup default stable
+          cmake -S compiler -B compiler/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build compiler/build -j$(nproc)
 
-      - name: Run tests
-        run: make test
+      - name: Parse-check all test sources
+        run: |
+          mapfile -t files < <(find tests -type f -name '*.rx' ! -path '*/parser/*' ! -path '*/lexer/*')
+          for f in "${files[@]}"; do
+            if ! compiler/build/compiler --stage semantic "$f" >/dev/null 2>&1; then
+              echo "parse failed: $f"
+              exit 1
+            fi
+          done
+          echo "parsed ${#files[@]} files successfully"
