@@ -14,11 +14,12 @@ namespace rx
         std::unique_ptr<Block> buildBlock(rxgrammar::RxParser::BlockExpressionContext* ctx);
         std::unique_ptr<Stmt> buildStatement(rxgrammar::RxParser::StatementContext* ctx);
         std::unique_ptr<Stmt> buildLetStatement(rxgrammar::RxParser::LetStatementContext* ctx);
+
         std::unique_ptr<Expr> buildExpression(rxgrammar::RxParser::ExpressionContext* ctx);
         std::unique_ptr<Expr> buildAdditiveExpression(rxgrammar::RxParser::AdditiveExpressionContext* ctx);
         std::unique_ptr<Expr> buildMultiplicativeExpression(rxgrammar::RxParser::MultiplicativeExpressionContext* ctx);
         std::unique_ptr<Expr> buildCastExpression(rxgrammar::RxParser::CastExpressionContext* ctx);
-        std::unique_ptr<Expr> buildPathInExpression(rxgrammar::RxParser::PathInExpressionContext* ctx);
+        std::unique_ptr<Expr> buildPathExpr(rxgrammar::RxParser::PathInExpressionContext* ctx);
         std::unique_ptr<Expr> buildLiteralExpression(rxgrammar::RxParser::LiteralExpressionContext* ctx);
         std::unique_ptr<Expr> buildNonBlockPrimary(rxgrammar::RxParser::NonBlockPrimaryContext* ctx);
         std::unique_ptr<Expr> buildPrimaryExpression(rxgrammar::RxParser::PrimaryExpressionContext* ctx);
@@ -44,7 +45,6 @@ namespace rx
 
         std::unique_ptr<Expr> buildStatementAssignmentExpression(
             rxgrammar::RxParser::StatementAssignmentExpressionContext* ctx);
-        std::unique_ptr<Expr> buildStatementExpression(rxgrammar::RxParser::StatementExpressionContext* ctx);
         std::unique_ptr<Expr> buildStatementLogicalOrExpression(
             rxgrammar::RxParser::StatementLogicalOrExpressionContext* ctx);
         std::unique_ptr<Expr> buildStatementLogicalAndExpression(
@@ -66,19 +66,12 @@ namespace rx
         std::unique_ptr<Expr> buildStatementPostfixExpression(
             rxgrammar::RxParser::StatementPostfixExpressionContext* ctx);
 
-        std::unique_ptr<Expr> buildExpressionWithBlock(
-            rxgrammar::RxParser::ExpressionWithBlockContext* ctx);
-        std::unique_ptr<Expr> buildIfExpression(
-            rxgrammar::RxParser::IfExpressionContext* ctx);
-        std::unique_ptr<Expr> buildLoopExpression(
-            rxgrammar::RxParser::BlockExpressionContext* ctx);
-        std::unique_ptr<Expr> buildWhileExpression(
-            rxgrammar::RxParser::ConditionExpressionContext* condition,
-            rxgrammar::RxParser::BlockExpressionContext* body);
-        std::unique_ptr<Expr> buildBlockExpressionAsExpr(
-            rxgrammar::RxParser::BlockExpressionContext* ctx);
-        std::unique_ptr<Expr> buildConditionExpression(
-            rxgrammar::RxParser::ConditionExpressionContext* ctx);
+        std::unique_ptr<Expr> buildExpressionWithBlock(rxgrammar::RxParser::ExpressionWithBlockContext* ctx);
+        std::unique_ptr<Expr> buildIfExpression(rxgrammar::RxParser::IfExpressionContext* ctx);
+        std::unique_ptr<Expr> buildLoopExpression(rxgrammar::RxParser::BlockExpressionContext* ctx);
+        std::unique_ptr<Expr> buildWhileExpression(rxgrammar::RxParser::ConditionExpressionContext* condition,
+                                                   rxgrammar::RxParser::BlockExpressionContext* body);
+        std::unique_ptr<Expr> buildBlockExpr(rxgrammar::RxParser::BlockExpressionContext* ctx);
         std::unique_ptr<Expr> buildConditionAssignmentExpression(
             rxgrammar::RxParser::ConditionAssignmentExpressionContext* ctx);
         std::unique_ptr<Expr> buildConditionLogicalOrExpression(
@@ -125,7 +118,16 @@ namespace rx
             rxgrammar::RxParser::ConditionPrimaryWithoutBareBlockContext* ctx);
 
         std::unique_ptr<Type> buildTypeRef(rxgrammar::RxParser::TypeRefContext* ctx);
+        std::unique_ptr<Type> buildArrayType(rxgrammar::RxParser::ArrayTypeContext* ctx);
+        std::unique_ptr<Type> buildClosedCastType(rxgrammar::RxParser::ClosedCastTypeContext* ctx);
         std::unique_ptr<Expr> buildConstValue(rxgrammar::RxParser::ConstValueContext* ctx);
         std::unique_ptr<Expr> buildMagnitude(rxgrammar::RxParser::MagnitudeContext* ctx);
+
+        Path buildPath(rxgrammar::RxParser::PathInExpressionContext* ctx);
+        Path buildTypePath(rxgrammar::RxParser::TypePathContext* ctx);
+        std::vector<GenericArg> buildGenericArgs(rxgrammar::RxParser::GenericArgsContext* ctx);
+        std::vector<LifetimeParam> buildGenericParams(rxgrammar::RxParser::GenericParamsContext* ctx);
+        std::vector<WherePredicate> buildWhereClause(rxgrammar::RxParser::WhereClauseContext* ctx);
+        UseTree buildUseTree(rxgrammar::RxParser::UseTreeContext* ctx);
     };
 }

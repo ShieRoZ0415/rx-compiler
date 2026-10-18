@@ -8,236 +8,409 @@
 #include "RxParser.h"
 #include "ast_builder.h"
 
-void printType(const rx::Type* type, int indent) {
-    if (!type) {
-        std::cout << std::string(indent, ' ') << "Type: <null>\n";
-        return;
-    }
-    std::string pad(indent, ' ');
-    switch (type->kind) {
-    case rx::TypeKind::Unit:
-        std::cout << pad << "Type: () [Unit]\n";
-        break;
-    case rx::TypeKind::Path:
-        std::cout << pad << "Type: " << type->path << " [Path]\n";
-        break;
-    case rx::TypeKind::Reference:
-        std::cout << pad << "Type: &" << (type->isMutable ? "mut " : "")
-            << "[Reference]\n";
-        printType(type->inner.get(), indent + 2);
-        break;
-    case rx::TypeKind::Array:
-        std::cout << pad << "Type: [" << type->arrayLength << "] [Array]\n";
-        printType(type->element.get(), indent + 2);
-        break;
-    }
-}
+namespace
+{
+    class PrintVisitor : public rx::Visitor {
+    public:
+        explicit PrintVisitor(std::ostream& os) : out(os) {}
 
-void printExpr(const rx::Expr* expr, int indent);
-
-void printBlock(const rx::Block* block, int indent) {
-    if (!block) return;
-    for (const auto& stmt : block->statements) {
-        if (stmt->kind == rx::StmtKind::Let) {
-            std::cout << std::string(indent, ' ') << "Let: " << stmt->name
-                << (stmt->isMutable ? " (mut)" : "")
-                << " : " << stmt->typeName << "\n";
-            printType(stmt->type.get(), indent + 2);
-            printExpr(stmt->expression.get(), indent + 2);
+        void visitCrate(const rx::Crate& crate) override {
+            out << "Crate\n";
+            for (const auto& item : crate.items) item->accept(*this);
         }
-        else if (stmt->expression) {
-            std::cout << std::string(indent, ' ') << "Statement\n";
-            printExpr(stmt->expression.get(), indent + 2);
+
+        void visitBlock(const rx::Block& block) override {
+            out << pad() << "Block\n";
+            depth++;
+            for (const auto& stmt : block.statements) stmt->accept(*this);
+            if (block.tail) {
+                out << pad() << "Tail\n";
+                depth++;
+                block.tail->accept(*this);
+                out << "\n";
+                depth--;
+            }
+            depth--;
         }
-    }
-    if (block->tail) {
-        std::cout << std::string(indent, ' ') << "Tail\n";
-        printExpr(block->tail.get(), indent + 2);
-    }
-}
 
-void printExpr(const rx::Expr* expr, int indent) {
-    if (!expr) return;
+        void visitUnitType(const rx::UnitType&) override { out << "()"; }
+        void visitPathType(const rx::PathType& type) override { printPath(type.path); }
 
-    std::cout << std::string(indent, ' ');
-
-    switch (expr->kind) {
-    case rx::ExprKind::IntegerLiteral:
-        std::cout << "IntegerLiteral: " << expr->text << "\n";
-        break;
-    case rx::ExprKind::BooleanLiteral:
-        std::cout << "BooleanLiteral: " << expr->text << "\n";
-        break;
-    case rx::ExprKind::Variable:
-        std::cout << "Variable: " << expr->text << "\n";
-        break;
-    case rx::ExprKind::Binary:
-        std::cout << "Binary: " << expr->text << "\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Unary:
-        std::cout << "Unary: " << expr->text << "\n";
-        if (!expr->operands.empty()) printExpr(expr->operands[0].get(), indent + 2);
-        break;
-    case rx::ExprKind::Assignment:
-        std::cout << "Assignment: " << expr->text << "\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Cast:
-        std::cout << "Cast: " << expr->text << "\n";
-        if (!expr->operands.empty()) printExpr(expr->operands[0].get(), indent + 2);
-        break;
-    case rx::ExprKind::Array:
-        std::cout << "Array: " << expr->text << "\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Call:
-        std::cout << "Call\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Index:
-        std::cout << "Index: " << expr->text << "\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Method:
-        std::cout << "Method: " << expr->text << "\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Field:
-        std::cout << "Field: " << expr->text << "\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Break:
-        std::cout << "Break\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Return:
-        std::cout << "Return\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Continue:
-        std::cout << "Continue\n";
-        break;
-    case rx::ExprKind::Struct:
-        std::cout << "Struct: " << expr->text << "\n";
-        for (size_t i = 0; i < expr->operands.size(); ++i) {
-            std::cout << std::string(indent + 2, ' ') << "Field: "
-                << (i < expr->fieldNames.size() ? expr->fieldNames[i] : "?")
-                << "\n";
-            printExpr(expr->operands[i].get(), indent + 4);
+        void visitReferenceType(const rx::ReferenceType& type) override {
+            out << "&";
+            if (!type.lifetime.empty()) out << type.lifetime << " ";
+            if (type.isMutable) out << "mut ";
+            type.inner->accept(*this);
         }
-        break;
-    case rx::ExprKind::Block:
-        std::cout << "Block\n";
-        printBlock(expr->block.get(), indent + 2);
-        break;
-    case rx::ExprKind::If:
-        std::cout << "If\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::Loop:
-        std::cout << "Loop\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    case rx::ExprKind::While:
-        std::cout << "While\n";
-        for (const auto& operand : expr->operands) printExpr(operand.get(), indent + 2);
-        break;
-    default:
-        std::cout << "Unknown\n";
-        break;
-    }
-}
 
-void printItem(const rx::Item* item, int indent) {
-    if (!item) return;
-    std::string pad(indent, ' ');
-
-    switch (item->kind) {
-    case rx::ItemKind::Use:
-        std::cout << pad << "Use: " << item->name << "\n";
-        break;
-
-    case rx::ItemKind::Struct:
-        std::cout << pad << "Struct: " << item->name;
-        if (!item->genericParams.empty()) std::cout << " <" << item->genericParams << ">";
-        std::cout << "\n";
-        if (!item->whereClause.empty()) std::cout << pad << "  where " << item->whereClause << "\n";
-        for (const auto& a : item->attributes)
-            std::cout << pad << "  attribute: " << a << "\n";
-        for (const auto& f : item->fields) {
-            std::cout << pad << "  field: " << f.name << " : " << f.typeName << "\n";
-            printType(f.type.get(), indent + 4);
+        void visitArrayType(const rx::ArrayType& type) override {
+            out << "[";
+            type.element->accept(*this);
+            out << "; ";
+            type.length->accept(*this);
+            out << "]";
         }
-        break;
 
-    case rx::ItemKind::Function: {
-        const auto& fn = item->function;
-        if (!fn) break;
-        std::cout << pad << "Function: " << fn->name;
-        if (!fn->genericParams.empty()) std::cout << " <" << fn->genericParams << ">";
-        std::cout << "\n";
-        if (!fn->whereClause.empty()) std::cout << pad << "  where " << fn->whereClause << "\n";
-        for (const auto& p : fn->parameters) {
-            std::cout << pad << "  param: " << p.name
-                << (p.isSelf ? " (self)" : "")
-                << " : " << p.typeName
-                << (p.isMutable ? " [mut]" : "") << "\n";
-            printType(p.type.get(), indent + 4);
+        void visitIntegerLiteralExpr(const rx::IntegerLiteralExpr& expr) override { out << expr.text; }
+        void visitBooleanLiteralExpr(const rx::BooleanLiteralExpr& expr) override { out << (expr.value ? "true" : "false"); }
+
+        void visitPathExpr(const rx::PathExpr& expr) override { printPath(expr.path); }
+
+        void visitUnaryExpr(const rx::UnaryExpr& expr) override {
+            out << expr.op;
+            if (expr.op == "&mut") out << " ";
+            expr.operand->accept(*this);
         }
-        std::cout << pad << "  returns: " << fn->resultType << "\n";
-        printType(fn->result.get(), indent + 4);
-        std::cout << pad << "  body:\n";
-        printBlock(fn->body.get(), indent + 2);
-        break;
-    }
 
-    case rx::ItemKind::Constant:
-        std::cout << pad << "Const: " << item->name << "\n";
-        printType(item->type.get(), indent + 2);
-        std::cout << pad << "  value:\n";
-        printExpr(item->value.get(), indent + 4);
-        break;
+        void visitBinaryExpr(const rx::BinaryExpr& expr) override {
+            out << "(";
+            expr.lhs->accept(*this);
+            out << " " << expr.op << " ";
+            expr.rhs->accept(*this);
+            out << ")";
+        }
 
-    case rx::ItemKind::Impl:
-        std::cout << pad << "Impl: " << item->name << "\n";
-        printType(item->type.get(), indent + 2);
-        if (!item->genericParams.empty()) std::cout << pad << "  generic: " << item->genericParams << "\n";
-        if (!item->whereClause.empty()) std::cout << pad << "  where " << item->whereClause << "\n";
-        for (const auto& assoc : item->associatedItems)
-            printItem(assoc.get(), indent + 2);
-        break;
-    }
+        void visitAssignmentExpr(const rx::AssignmentExpr& expr) override {
+            out << "(";
+            expr.lhs->accept(*this);
+            out << " " << expr.op << " ";
+            expr.rhs->accept(*this);
+            out << ")";
+        }
+
+        void visitCastExpr(const rx::CastExpr& expr) override {
+            expr.value->accept(*this);
+            out << " as ";
+            expr.type->accept(*this);
+        }
+
+        void visitCallExpr(const rx::CallExpr& expr) override {
+            expr.callee->accept(*this);
+            out << "(";
+            for (size_t i = 0; i < expr.args.size(); ++i) {
+                if (i) out << ", ";
+                expr.args[i]->accept(*this);
+            }
+            out << ")";
+        }
+
+        void visitMethodCallExpr(const rx::MethodCallExpr& expr) override {
+            expr.receiver->accept(*this);
+            out << "." << expr.method << "(";
+            for (size_t i = 0; i < expr.args.size(); ++i) {
+                if (i) out << ", ";
+                expr.args[i]->accept(*this);
+            }
+            out << ")";
+        }
+
+        void visitFieldAccessExpr(const rx::FieldAccessExpr& expr) override {
+            expr.receiver->accept(*this);
+            out << "." << expr.field;
+        }
+
+        void visitIndexExpr(const rx::IndexExpr& expr) override {
+            expr.base->accept(*this);
+            out << "[";
+            expr.index->accept(*this);
+            out << "]";
+        }
+
+        void visitArrayExpr(const rx::ArrayExpr& expr) override {
+            out << "[";
+            for (size_t i = 0; i < expr.elements.size(); ++i) {
+                if (i) out << ", ";
+                expr.elements[i]->accept(*this);
+            }
+            if (expr.repeat) {
+                if (!expr.elements.empty()) out << "; ";
+                expr.repeat->accept(*this);
+            }
+            out << "]";
+        }
+
+        void visitStructExpr(const rx::StructExpr& expr) override {
+            printPath(expr.path);
+            out << " { ";
+            for (size_t i = 0; i < expr.fields.size(); ++i) {
+                if (i) out << ", ";
+                out << expr.fields[i] << ": ";
+                expr.values[i]->accept(*this);
+            }
+            out << " }";
+        }
+
+        void visitBlockExpr(const rx::BlockExpr& expr) override { expr.block->accept(*this); }
+
+        void visitIfExpr(const rx::IfExpr& expr) override {
+            out << "if ";
+            expr.condition->accept(*this);
+            out << " ";
+            expr.thenBranch->accept(*this);
+            if (expr.elseBranch) {
+                out << " else ";
+                expr.elseBranch->accept(*this);
+            }
+        }
+
+        void visitLoopExpr(const rx::LoopExpr& expr) override {
+            out << "loop ";
+            expr.body->accept(*this);
+        }
+
+        void visitWhileExpr(const rx::WhileExpr& expr) override {
+            out << "while ";
+            expr.condition->accept(*this);
+            out << " ";
+            expr.body->accept(*this);
+        }
+
+        void visitBreakExpr(const rx::BreakExpr& expr) override {
+            out << "break";
+            if (expr.value) {
+                out << " ";
+                expr.value->accept(*this);
+            }
+        }
+
+        void visitReturnExpr(const rx::ReturnExpr& expr) override {
+            out << "return";
+            if (expr.value) {
+                out << " ";
+                expr.value->accept(*this);
+            }
+        }
+
+        void visitContinueExpr(const rx::ContinueExpr&) override { out << "continue"; }
+        void visitUnitExpr(const rx::UnitExpr&) override { out << "()"; }
+
+        void visitLetStmt(const rx::LetStmt& stmt) override {
+            out << pad() << "let " << (stmt.isMutable ? "mut " : "") << stmt.name;
+            if (stmt.type) {
+                out << ": ";
+                stmt.type->accept(*this);
+            }
+            out << " = ";
+            stmt.initializer->accept(*this);
+            out << ";\n";
+        }
+
+        void visitExprStmt(const rx::ExprStmt& stmt) override {
+            out << pad();
+            stmt.expression->accept(*this);
+            out << (stmt.hasSemicolon ? ";\n" : "\n");
+        }
+
+        void visitEmptyStmt(const rx::EmptyStmt&) override { out << pad() << ";\n"; }
+
+        void visitUseItem(const rx::UseItem& item) override {
+            out << pad() << "use ";
+            printUseTree(item.useTree);
+            out << ";\n";
+        }
+
+        void visitStructItem(const rx::StructItem& item) override {
+            out << pad() << "struct " << item.name;
+            printGenericParams(item.genericParams);
+            printWhereClause(item.whereClause);
+            if (!item.attributes.empty()) {
+                out << " #[derive(";
+                for (size_t i = 0; i < item.attributes.size(); ++i) {
+                    if (i) out << ", ";
+                    out << item.attributes[i];
+                }
+                out << ")]";
+            }
+            out << " {\n";
+            depth++;
+            for (const auto& field : item.fields) {
+                out << pad() << field.name << ": ";
+                field.type->accept(*this);
+                out << ",\n";
+            }
+            depth--;
+            out << pad() << "}\n";
+        }
+
+        void visitFunctionItem(const rx::FunctionItem& item) override {
+            out << pad() << "fn " << item.name;
+            printGenericParams(item.genericParams);
+            out << "(";
+            for (size_t i = 0; i < item.parameters.size(); ++i) {
+                if (i) out << ", ";
+                const auto& p = item.parameters[i];
+                if (p.isSelf) {
+                    if (p.isReference) out << "&";
+                    if (!p.lifetime.empty()) out << p.lifetime << " ";
+                    if (p.isMutable) out << "mut ";
+                    out << "self";
+                }
+                else {
+                    if (p.isMutable) out << "mut ";
+                    out << p.name << ": ";
+                    p.type->accept(*this);
+                }
+            }
+            out << ")";
+            if (item.resultType) {
+                out << " -> ";
+                item.resultType->accept(*this);
+            }
+            printWhereClause(item.whereClause);
+            out << "\n";
+            depth++;
+            item.body->accept(*this);
+            depth--;
+        }
+
+        void visitConstItem(const rx::ConstItem& item) override {
+            out << pad() << "const " << item.name << ": ";
+            item.type->accept(*this);
+            out << " = ";
+            item.value->accept(*this);
+            out << ";\n";
+        }
+
+        void visitImplItem(const rx::ImplItem& item) override {
+            out << pad() << "impl";
+            printGenericParams(item.genericParams);
+            out << " ";
+            item.selfType->accept(*this);
+            printWhereClause(item.whereClause);
+            out << " {\n";
+            depth++;
+            for (const auto& child : item.items) child->accept(*this);
+            depth--;
+            out << pad() << "}\n";
+        }
+
+    private:
+        std::ostream& out;
+        int depth = 0;
+
+        std::string pad() const { return std::string(depth * 2, ' '); }
+
+        void printPath(const rx::Path& path) {
+            for (size_t i = 0; i < path.segments.size(); ++i) {
+                if (i) out << "::";
+                out << path.segments[i].name;
+                if (!path.segments[i].args.empty()) {
+                    out << "<";
+                    for (size_t j = 0; j < path.segments[i].args.size(); ++j) {
+                        if (j) out << ", ";
+                        const auto& arg = path.segments[i].args[j];
+                        if (arg.isLifetime) out << arg.lifetime;
+                        else if (arg.type) arg.type->accept(*this);
+                    }
+                    out << ">";
+                }
+            }
+        }
+
+        void printGenericParams(const std::vector<rx::LifetimeParam>& params) {
+            if (params.empty()) return;
+            out << "<";
+            for (size_t i = 0; i < params.size(); ++i) {
+                if (i) out << ", ";
+                out << params[i].name;
+                if (!params[i].bounds.empty()) {
+                    out << ": ";
+                    for (size_t j = 0; j < params[i].bounds.size(); ++j) {
+                        if (j) out << " + ";
+                        out << params[i].bounds[j];
+                    }
+                }
+            }
+            out << ">";
+        }
+
+        void printWhereClause(const std::vector<rx::WherePredicate>& predicates) {
+            if (predicates.empty()) return;
+            out << " where ";
+            for (size_t i = 0; i < predicates.size(); ++i) {
+                if (i) out << ", ";
+                const auto& p = predicates[i];
+                if (p.isLifetime) {
+                    out << p.lifetime << ": ";
+                    for (size_t j = 0; j < p.bounds.size(); ++j) {
+                        if (j) out << " + ";
+                        out << p.bounds[j];
+                    }
+                }
+                else {
+                    p.type->accept(*this);
+                    out << ": ";
+                    for (size_t j = 0; j < p.bounds.size(); ++j) {
+                        if (j) out << " + ";
+                        out << p.bounds[j];
+                    }
+                }
+            }
+        }
+
+        void printUseTree(const rx::UseTree& tree) {
+            if (tree.isGlob) {
+                if (!tree.path.empty()) out << tree.path << "::";
+                out << "*";
+                return;
+            }
+            if (tree.isGroup) {
+                if (!tree.path.empty()) out << tree.path << "::";
+                out << "{";
+                for (size_t i = 0; i < tree.children.size(); ++i) {
+                    if (i) out << ", ";
+                    printUseTree(tree.children[i]);
+                }
+                out << "}";
+                return;
+            }
+            out << tree.path;
+            if (!tree.alias.empty()) out << " as " << tree.alias;
+        }
+    };
 }
 
 int main(int argc, char** argv) {
+    std::string stage = "dump";
+    std::string filename;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--stage" && i + 1 < argc) {
+            stage = argv[++i];
+        }
+        else if (!arg.empty() && arg[0] != '-') {
+            filename = arg;
+        }
+    }
+
     std::string code;
 
-    if (argc >= 2) {
-        std::ifstream in(argv[1]);
-
+    if (!filename.empty()) {
+        std::ifstream in(filename);
         if (!in) {
-            std::cerr << "Cannot open file: " << argv[1] << "\n";
+            std::cerr << "Cannot open file: " << filename << "\n";
             return 1;
         }
-
-        code.assign(
-            std::istreambuf_iterator<char>(in),
-            std::istreambuf_iterator<char>()
-        );
+        code.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
     else {
         code = R"(
+struct Pair<'a> {
+    first: &'a i32,
+    second: i32,
+}
 fn main() {
     let x = 1 + 2 * 3;
+    let v: Vec<i32> = Vec::new();
+    println_i32(x);
 }
 )";
     }
-    antlr4::ANTLRInputStream input(code);
 
+    antlr4::ANTLRInputStream input(code);
     rxgrammar::RxLexer lexer(&input);
     antlr4::CommonTokenStream tokens(&lexer);
-
     rxgrammar::RxParser parser(&tokens);
 
     auto* tree = parser.crate();
@@ -248,16 +421,15 @@ fn main() {
     }
 
     rx::ASTBuilder builder;
-
     auto ast = builder.buildCrate(tree);
 
-    std::cout << "AST created successfully.\n";
-    std::cout << "Top-level items: "
-        << ast->items.size() << '\n';
-
-    for (const auto& item : ast->items) {
-        printItem(item.get(), 2);
+    if (stage == "semantic") {
+        // Semantic analysis starts here: walk the AST and reject invalid programs with exit code 1.
+        return 0;
     }
+
+    PrintVisitor printer(std::cout);
+    ast->accept(printer);
 
     return 0;
 }
