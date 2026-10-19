@@ -9,6 +9,8 @@ jobs:
   build-and-parse:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      LD_LIBRARY_PATH: /usr/local/lib
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +30,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/antlr4/build -j$(nproc)
           sudo cmake --install /tmp/antlr4/build
+          sudo ldconfig
 
       - name: Build compiler
         run: |
@@ -38,8 +41,9 @@ jobs:
         run: |
           mapfile -t files < <(find tests -type f -name '*.rx' ! -path '*/parser/*' ! -path '*/lexer/*')
           for f in "${files[@]}"; do
-            if ! compiler/build/compiler --stage semantic "$f" >/dev/null 2>&1; then
+            if ! compiler/build/compiler --stage semantic "$f" >/tmp/parse.out 2>&1; then
               echo "parse failed: $f"
+              cat /tmp/parse.out
               exit 1
             fi
           done
