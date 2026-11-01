@@ -7,6 +7,7 @@
 #include "RxLexer.h"
 #include "RxParser.h"
 #include "ast_builder.h"
+#include "semantic/analyzer.h"
 
 namespace
 {
@@ -139,8 +140,6 @@ namespace
             }
             out << " }";
         }
-
-        void visitBlockExpr(const rx::BlockExpr& expr) override { expr.block->accept(*this); }
 
         void visitIfExpr(const rx::IfExpr& expr) override {
             out << "if ";
@@ -291,14 +290,14 @@ namespace
         std::string pad() const { return std::string(depth * 2, ' '); }
 
         void printPath(const rx::Path& path) {
-            for (size_t i = 0; i < path.segments.size(); ++i) {
+            for (size_t i = 0; i < path.size(); ++i) {
                 if (i) out << "::";
-                out << path.segments[i].name;
-                if (!path.segments[i].args.empty()) {
+                out << path[i].name;
+                if (!path[i].args.empty()) {
                     out << "<";
-                    for (size_t j = 0; j < path.segments[i].args.size(); ++j) {
+                    for (size_t j = 0; j < path[i].args.size(); ++j) {
                         if (j) out << ", ";
-                        const auto& arg = path.segments[i].args[j];
+                        const auto& arg = path[i].args[j];
                         if (arg.isLifetime) out << arg.lifetime;
                         else if (arg.type) arg.type->accept(*this);
                     }
@@ -424,8 +423,8 @@ fn main() {
     auto ast = builder.buildCrate(tree);
 
     if (stage == "semantic") {
-        // Semantic analysis starts here: walk the AST and reject invalid programs with exit code 1.
-        return 0;
+        rx::SemanticAnalyzer analyzer;
+        return analyzer.run(*ast) ? 0 : 1;
     }
 
     PrintVisitor printer(std::cout);

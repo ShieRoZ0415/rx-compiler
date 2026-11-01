@@ -71,7 +71,6 @@ namespace rx
         std::unique_ptr<Expr> buildLoopExpression(rxgrammar::RxParser::BlockExpressionContext* ctx);
         std::unique_ptr<Expr> buildWhileExpression(rxgrammar::RxParser::ConditionExpressionContext* condition,
                                                    rxgrammar::RxParser::BlockExpressionContext* body);
-        std::unique_ptr<Expr> buildBlockExpr(rxgrammar::RxParser::BlockExpressionContext* ctx);
         std::unique_ptr<Expr> buildConditionAssignmentExpression(
             rxgrammar::RxParser::ConditionAssignmentExpressionContext* ctx);
         std::unique_ptr<Expr> buildConditionLogicalOrExpression(

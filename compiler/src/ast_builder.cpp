@@ -2,6 +2,28 @@
 
 namespace rx
 {
+    Span sourceSpan(antlr4::ParserRuleContext* ctx) {
+        Span span;
+        if (!ctx || !ctx->getStart()) return span;
+        auto* start = ctx->getStart();
+        auto* stop = ctx->getStop();
+        if (!stop) stop = start;
+        span.line = start->getLine();
+        span.column = start->getCharPositionInLine();
+        const auto invalid = std::numeric_limits<std::size_t>::max();
+        const auto begin = start->getStartIndex();
+        const auto end = stop->getStopIndex();
+        if (begin != invalid) span.beginOffset = begin;
+        if (begin != invalid && end != invalid && end >= begin) {
+            span.endOffset = end + 1;
+        } else {
+            span.endOffset = span.beginOffset;
+        }
+
+        span.valid = true;
+        return span;
+    }
+
     std::unique_ptr<Crate> ASTBuilder::buildCrate(rxgrammar::RxParser::CrateContext* ctx) {
         auto crate = std::make_unique<Crate>();
         for (auto* itemCtx : ctx->item()) {
@@ -183,12 +205,12 @@ namespace rx
                 PathSegment seg;
                 seg.name = segment->pathIdentSegment()->getText();
                 if (segment->genericArgs()) seg.args = buildGenericArgs(segment->genericArgs());
-                type->path.segments.push_back(std::move(seg));
+                type->path.push_back(std::move(seg));
             }
             PathSegment last;
             last.name = ctx->pathIdentSegment()->getText();
             if (ctx->genericArgs()) last.args = buildGenericArgs(ctx->genericArgs());
-            type->path.segments.push_back(std::move(last));
+            type->path.push_back(std::move(last));
             return type;
         }
         return nullptr;
@@ -200,7 +222,7 @@ namespace rx
             PathSegment seg;
             seg.name = segment->pathIdentSegment()->getText();
             if (segment->genericArgs()) seg.args = buildGenericArgs(segment->genericArgs());
-            path.segments.push_back(std::move(seg));
+            path.push_back(std::move(seg));
         }
         return path;
     }
@@ -211,7 +233,7 @@ namespace rx
             PathSegment seg;
             seg.name = segment->pathIdentSegment()->getText();
             if (segment->genericArgs()) seg.args = buildGenericArgs(segment->genericArgs());
-            path.segments.push_back(std::move(seg));
+            path.push_back(std::move(seg));
         }
         return path;
     }
@@ -557,6 +579,10 @@ namespace rx
                     auto method = std::make_unique<MethodCallExpr>();
                     method->receiver = std::move(base);
                     method->method = dot->pathExprSegment()->pathIdentSegment()->getText();
+                    if (dot->pathExprSegment()->genericArgs()) {
+                        method->typeArgs = buildGenericArgs(dot->pathExprSegment()->genericArgs());
+                    }
+
                     for (auto* arg : dot->callArguments()->expression()) {
                         auto argument = buildExpression(arg);
                         if (!argument) return nullptr;
@@ -1102,7 +1128,7 @@ namespace rx
                 lhs = std::move(binary);
                 pendingOperator.clear();
                 continue;
-            }
+                }
             if (auto* additive = dynamic_cast<rxgrammar::RxParser::AdditiveExpressionContext*>(child)) {
                 auto value = buildAdditiveExpression(additive);
                 if (!value) return nullptr;
@@ -1207,6 +1233,9 @@ namespace rx
                     auto method = std::make_unique<MethodCallExpr>();
                     method->receiver = std::move(base);
                     method->method = dot->pathExprSegment()->pathIdentSegment()->getText();
+                    if (dot->pathExprSegment()->genericArgs()) {
+                        method->typeArgs = buildGenericArgs(dot->pathExprSegment()->genericArgs());
+                    }
                     for (auto* arg : dot->callArguments()->expression()) {
                         auto argument = buildExpression(arg);
                         if (!argument) return nullptr;
@@ -1252,6 +1281,9 @@ namespace rx
                     auto method = std::make_unique<MethodCallExpr>();
                     method->receiver = std::move(base);
                     method->method = dot->pathExprSegment()->pathIdentSegment()->getText();
+                    if (dot->pathExprSegment()->genericArgs()) {
+                        method->typeArgs = buildGenericArgs(dot->pathExprSegment()->genericArgs());
+                    }
                     for (auto* arg : dot->callArguments()->expression()) {
                         auto argument = buildExpression(arg);
                         if (!argument) return nullptr;
@@ -1274,23 +1306,17 @@ namespace rx
         return base;
     }
 
-    std::unique_ptr<Expr> ASTBuilder::buildBlockExpr(rxgrammar::RxParser::BlockExpressionContext* ctx) {
-        auto expr = std::make_unique<BlockExpr>();
-        expr->block = buildBlock(ctx);
-        return expr;
-    }
-
     std::unique_ptr<Expr> ASTBuilder::buildExpressionWithBlock(rxgrammar::RxParser::ExpressionWithBlockContext* ctx) {
         if (ctx->ifExpression()) return buildIfExpression(ctx->ifExpression());
         if (ctx->LOOP()) return buildLoopExpression(ctx->blockExpression());
         if (ctx->WHILE()) return buildWhileExpression(ctx->conditionExpression(), ctx->blockExpression());
-        if (ctx->blockExpression()) return buildBlockExpr(ctx->blockExpression());
+        if (ctx->blockExpression()) return buildBlock(ctx->blockExpression());
         return nullptr;
     }
 
     std::unique_ptr<Expr> ASTBuilder::buildLoopExpression(rxgrammar::RxParser::BlockExpressionContext* ctx) {
         auto expr = std::make_unique<LoopExpr>();
-        expr->body = buildBlockExpr(ctx);
+        expr->body = buildBlock(ctx);
         return expr;
     }
 
@@ -1300,7 +1326,7 @@ namespace rx
         if (!cond) return nullptr;
         auto expr = std::make_unique<WhileExpr>();
         expr->condition = std::move(cond);
-        expr->body = buildBlockExpr(body);
+        expr->body = buildBlock(body);
         return expr;
     }
 
@@ -1314,13 +1340,13 @@ namespace rx
 
         auto expr = std::make_unique<IfExpr>();
         expr->condition = std::move(condition);
-        expr->thenBranch = buildBlockExpr(blocks[0]);
+        expr->thenBranch = buildBlock(blocks[0]);
 
         if (ctx->ifExpression()) {
             expr->elseBranch = buildIfExpression(ctx->ifExpression());
         }
         else if (blocks.size() >= 2) {
-            expr->elseBranch = buildBlockExpr(blocks[1]);
+            expr->elseBranch = buildBlock(blocks[1]);
         }
         return expr;
     }
@@ -1808,6 +1834,9 @@ namespace rx
                     auto method = std::make_unique<MethodCallExpr>();
                     method->receiver = std::move(base);
                     method->method = dot->pathExprSegment()->pathIdentSegment()->getText();
+                    if (dot->pathExprSegment()->genericArgs()) {
+                        method->typeArgs = buildGenericArgs(dot->pathExprSegment()->genericArgs());
+                    }
                     for (auto* arg : dot->callArguments()->expression()) {
                         auto argument = buildExpression(arg);
                         if (!argument) return nullptr;
@@ -1834,7 +1863,7 @@ namespace rx
             return buildConditionPrimaryWithoutBareBlock(ctx->conditionPrimaryWithoutBareBlock());
         }
         if (ctx->blockExpression()) {
-            return buildBlockExpr(ctx->blockExpression());
+            return buildBlock(ctx->blockExpression());
         }
         return nullptr;
     }

@@ -3,12 +3,22 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
 
 namespace rx
 {
     class Visitor;
 
+    struct Span {
+        std::size_t beginOffset = 0;
+        std::size_t endOffset = 0;
+        std::size_t line = 0;
+        std::size_t column = 0;
+        bool valid = false;
+    };
+
     struct Node {
+        Span span;
         virtual ~Node() = default;
         virtual void accept(Visitor& visitor) const = 0;
     };
@@ -32,9 +42,7 @@ namespace rx
         std::vector<GenericArg> args;
     };
 
-    struct Path {
-        std::vector<PathSegment> segments;
-    };
+    using Path = std::vector<PathSegment>;
 
     struct LifetimeParam {
         std::string name;
@@ -70,7 +78,7 @@ namespace rx
         std::vector<UseTree> children;
     };
 
-    struct Block : Node {
+    struct Block : Expr {
         std::vector<std::unique_ptr<Stmt>> statements;
         std::unique_ptr<Expr> tail;
 
@@ -161,6 +169,7 @@ namespace rx
         std::unique_ptr<Expr> receiver;
         std::string method;
         std::vector<std::unique_ptr<Expr>> args;
+        std::vector<GenericArg> typeArgs;
 
         void accept(Visitor& visitor) const override;
     };
@@ -190,12 +199,6 @@ namespace rx
         Path path;
         std::vector<std::string> fields;
         std::vector<std::unique_ptr<Expr>> values;
-
-        void accept(Visitor& visitor) const override;
-    };
-
-    struct BlockExpr : Expr {
-        std::unique_ptr<Block> block;
 
         void accept(Visitor& visitor) const override;
     };
@@ -305,10 +308,10 @@ namespace rx
         void accept(Visitor& visitor) const override;
     };
 
-    struct Crate {
+    struct Crate : Node {
         std::vector<std::unique_ptr<Item>> items;
 
-        void accept(Visitor& visitor) const;
+        void accept(Visitor& visitor) const override;
     };
 
     class Visitor {
@@ -336,7 +339,6 @@ namespace rx
         virtual void visitIndexExpr(const IndexExpr&) = 0;
         virtual void visitArrayExpr(const ArrayExpr&) = 0;
         virtual void visitStructExpr(const StructExpr&) = 0;
-        virtual void visitBlockExpr(const BlockExpr&) = 0;
         virtual void visitIfExpr(const IfExpr&) = 0;
         virtual void visitLoopExpr(const LoopExpr&) = 0;
         virtual void visitWhileExpr(const WhileExpr&) = 0;
@@ -374,7 +376,6 @@ namespace rx
     inline void IndexExpr::accept(Visitor& visitor) const { visitor.visitIndexExpr(*this); }
     inline void ArrayExpr::accept(Visitor& visitor) const { visitor.visitArrayExpr(*this); }
     inline void StructExpr::accept(Visitor& visitor) const { visitor.visitStructExpr(*this); }
-    inline void BlockExpr::accept(Visitor& visitor) const { visitor.visitBlockExpr(*this); }
     inline void IfExpr::accept(Visitor& visitor) const { visitor.visitIfExpr(*this); }
     inline void LoopExpr::accept(Visitor& visitor) const { visitor.visitLoopExpr(*this); }
     inline void WhileExpr::accept(Visitor& visitor) const { visitor.visitWhileExpr(*this); }

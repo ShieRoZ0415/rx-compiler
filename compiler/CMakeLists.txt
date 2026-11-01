@@ -27,6 +27,13 @@ add_executable(
         src/ast.h
         src/ast_builder.h
         src/ast_builder.cpp
+
+        src/semantic/type.h
+        src/semantic/type.cpp
+        src/semantic/symbol.h
+        src/semantic/symbol.cpp
+        src/semantic/analyzer.h
+        src/semantic/analyzer.cpp
 )
 
 
