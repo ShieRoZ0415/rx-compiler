@@ -1550,7 +1550,9 @@ namespace rx
 
             loops_.push_back(context);
 
-            SemType bodyType = checkExpr(*loop->body);
+
+            SemType bodyExpected = unitType();
+            SemType bodyType = checkExpr(*loop->body, &bodyExpected);
             if (bodyType.kind != TypeKind::Unit && bodyType.kind != TypeKind::Never) {
                 error("loop 的循环体必须产生 ()");
             }
@@ -1624,6 +1626,7 @@ namespace rx
 
     SemType SemanticAnalyzer::checkBlockBody(const Block& block, const SemType* expected) {
         SemType result = unitType();
+        bool hasTail = block.tail != nullptr;
         bool canReachEnd = true;
         for (std::size_t i = 0; i < block.statements.size(); ++i) {
             const Stmt& statement = *block.statements[i];
@@ -1638,8 +1641,10 @@ namespace rx
                 if (!isTail && !expressionStatement->hasSemicolon && statementType.kind != TypeKind::Unit && statementType.kind != TypeKind::Never) {
                     error("作为语句的块表达式必须产生 ()");
                 }
-
-                if (isTail) result = statementType;
+                if (isTail) {
+                    result = statementType;
+                    hasTail = true;
+                }
                 else result = unitType();
             }
             else {
@@ -1650,6 +1655,11 @@ namespace rx
             if (statementType.kind == TypeKind::Never) canReachEnd = false;
         }
         if (block.tail) result = checkExpr(*block.tail, expected);
+
+        if (hasTail && expected && !canCoerce(result, *expected)) {
+            error("代码块尾表达式需要 " + typeName(*expected) + "，实际为 " + typeName(result));
+        }
+
         if (!canReachEnd) result = neverType();
         currentType_ = result;
         return result;
@@ -1722,7 +1732,9 @@ namespace rx
         context.allowsValue = false;
         loops_.push_back(context);
 
-        SemType bodyType = checkExpr(*expr.body);
+        SemType bodyExpected = unitType();
+        SemType bodyType = checkExpr(*expr.body, &bodyExpected);
+
         if (bodyType.kind != TypeKind::Unit && bodyType.kind != TypeKind::Never) {
             error("while 的循环体必须产生 ()");
         }
