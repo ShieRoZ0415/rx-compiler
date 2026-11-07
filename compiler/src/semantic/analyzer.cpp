@@ -13,6 +13,22 @@ namespace rx
         scope.insert(name, std::move(sym));
     }
 
+    const SemType* SemanticAnalyzer::expressionType(const Expr& expr) const {
+        auto found = exprInfo_.find(&expr);
+        if (found == exprInfo_.end()) return nullptr;
+        return &found->second.type;
+    }
+
+    bool SemanticAnalyzer::constantValue(const std::string& key, SemType& type, long long& value) const {
+        auto found = constants_.find(key);
+        if (found == constants_.end() || found->second.state != 2) {
+            return false;
+        }
+        type = found->second.type;
+        value = found->second.value;
+        return true;
+    }
+
     bool SemanticAnalyzer::run(Crate& crate) {
         errorCount_ = 0;
         scopes_.clear();
@@ -21,17 +37,17 @@ namespace rx
         loops_.clear();
         methods_.clear();
         layoutState_.clear();
-
         structTypes_.clear();
-
+        resolvedTypes_.clear();
         exprInfo_.clear();
+        constants_.clear();
+        evaluatingConstant_ = false;
 
         for (const auto& item : crate.items) {
             const auto* structure = dynamic_cast<const StructItem*>(item.get());
             if (!structure) continue;
             const std::string& name = structure->name;
-            if (name == "i32" || name == "u32" || name == "isize" || name == "usize" ||
-                name == "bool" || name == "Box" || name == "Vec" || name == "Self") {
+            if (name == "i32" || name == "u32" || name == "isize" || name == "usize" || name == "bool" || name == "Box" || name == "Vec" || name == "Self") {
                 error("不能重新定义内建类型名: " + name);
                 continue;
             }
@@ -62,7 +78,6 @@ namespace rx
 
             const auto* target = dynamic_cast<const PathType*>(implementation->selfType.get());
             if (!target || target->path.size() != 1) continue;
-
             auto structure = structTypes_.find(target->path.front().name);
             if (structure == structTypes_.end()) continue;
 
@@ -87,7 +102,6 @@ namespace rx
             if (!structure) continue;
             auto found = structTypes_.find(structure->name);
             if (found == structTypes_.end()) continue;
-
             Symbol& symbol = found->second;
             if (symbol.type.structDef != structure) continue;
 
@@ -114,7 +128,8 @@ namespace rx
                     }
                     sym.paramTypes.push_back(resolveType(*p.type));
                 }
-                sym.returnType = f->resultType ? resolveType(*f->resultType) : unitType();
+                if (f->resultType) sym.returnType = resolveType(*f->resultType);
+                else sym.returnType = unitType();
                 currentScope().insert(f->name, std::move(sym));
             }
         }
@@ -128,22 +143,20 @@ namespace rx
                 Symbol sym;
                 sym.kind = Symbol::Kind::Const;
                 auto constant = constants_.find(c->name);
-                sym.type = constant == constants_.end() ? neverType() : constant->second.type;
+                if (constant == constants_.end()) sym.type = neverType();
+                else sym.type = constant->second.type;
                 currentScope().insert(c->name, std::move(sym));
             }
         }
 
         std::unordered_map<const StructItem*, std::unordered_set<std::string>> associatedNames;
         for (const auto& item : crate.items) {
-            const auto* implementation =
-                dynamic_cast<const ImplItem*>(item.get());
-
+            const auto* implementation = dynamic_cast<const ImplItem*>(item.get());
             if (!implementation) {
                 continue;
             }
 
             SemType target = resolveType(*implementation->selfType);
-
             if (target.kind != TypeKind::Struct || !target.structDef) {
                 continue;
             }
@@ -154,7 +167,6 @@ namespace rx
             for (const auto& item : implementation->items) {
                 const auto* function = dynamic_cast<const FunctionItem*>(item.get());
                 const auto* constant = dynamic_cast<const ConstItem*>(item.get());
-
                 std::string name;
                 if (function) name = function->name;
                 else if (constant) name = constant->name;
@@ -184,11 +196,8 @@ namespace rx
         registerBuiltin(currentScope(), "print_usize", {usizeType()}, unitType());
         registerBuiltin(currentScope(), "print_bool", {boolType()}, unitType());
         const FunctionItem* mainFunction = nullptr;
-
         for (const auto& item : crate.items) {
-            const auto* function =
-                dynamic_cast<const FunctionItem*>(item.get());
-
+            const auto* function = dynamic_cast<const FunctionItem*>(item.get());
             if (!function || function->name != "main") continue;
 
             if (mainFunction) error("重复定义入口函数 main");
@@ -219,6 +228,20 @@ namespace rx
     }
 
     SemType SemanticAnalyzer::resolveType(const Type& type) {
+        SemType result = resolveTypeImpl(type);
+        resolvedTypes_[&type] = result;
+        return result;
+    }
+
+    const SemType* SemanticAnalyzer::resolvedType(const Type& type) const {
+        auto found = resolvedTypes_.find(&type);
+        if (found == resolvedTypes_.end()) {
+            return nullptr;
+        }
+        return &found->second;
+    }
+
+    SemType SemanticAnalyzer::resolveTypeImpl(const Type& type) {
         if (dynamic_cast<const UnitType*>(&type)) return unitType();
         if (const auto* path = dynamic_cast<const PathType*>(&type)) return typeFromSegment(path->path.back());
         if (const auto* ref = dynamic_cast<const ReferenceType*>(&type)) {
@@ -232,7 +255,6 @@ namespace rx
             SemType t;
             t.kind = TypeKind::Array;
             t.inner = std::make_shared<SemType>(resolveType(*arr->element));
-
             t.arrayLength = readArrayLength(*arr->length);
             return t;
         }
@@ -249,8 +271,7 @@ namespace rx
             if (!argument.type) {
                 error("无效的类型实参: " + name);
                 return neverType();
-            }
-            ++typeArgCnt;
+            } ++typeArgCnt;
             typeArg = argument.type.get();
         }
         if (name == "Box" || name == "Vec") {
@@ -259,10 +280,9 @@ namespace rx
                 return neverType();
             }
             SemType t;
-            t.kind = name == "Box" ? TypeKind::Box : TypeKind::Vec;
-            t.inner = std::make_shared<SemType>(
-                resolveType(*typeArg)
-            );
+            if (name == "Box") t.kind = TypeKind::Box;
+            else t.kind = TypeKind::Vec;
+            t.inner = std::make_shared<SemType>(resolveType(*typeArg));
             return t;
         }
         if (typeArgCnt != 0) {
@@ -335,15 +355,14 @@ namespace rx
         return neverType();
     }
 
-
     bool SemanticAnalyzer::checkArgs(const FunctionItem& fn, const std::vector<SemType>& args) {
         bool hasSelf = !fn.parameters.empty() && fn.parameters[0].isSelf;
-        size_t start = hasSelf ? 1 : 0;
+        size_t start;
+        if (hasSelf) start = 1;
+        else start = 0;
         size_t expected = fn.parameters.size() - start;
-
         if (args.size() != expected) {
-            error("函数 " + fn.name + " 参数数量不匹配，期望 " + std::to_string(expected)
-                + " 个，得到 " + std::to_string(args.size()) + " 个");
+            error("函数 " + fn.name + " 参数数量不匹配，期望 " + std::to_string(expected) + " 个，得到 " + std::to_string(args.size()) + " 个");
             return false;
         }
         for (size_t i = 0; i < args.size(); ++i) {
@@ -362,10 +381,8 @@ namespace rx
         type = intType();
         hasSuffix = false;
 
-        for (const std::string suffix :
-             {"i32", "u32", "isize", "usize"}) {
-            if (number.size() >= suffix.size() &&
-                number.compare(number.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        for (const std::string suffix : {"i32", "u32", "isize", "usize"}) {
+            if (number.size() >= suffix.size() && number.compare(number.size() - suffix.size(), suffix.size(), suffix) == 0) {
                 hasSuffix = true;
                 number.resize(number.size() - suffix.size());
 
@@ -383,7 +400,6 @@ namespace rx
         }
 
         std::string digits;
-
         for (char ch : number) {
             if (ch != '_') {
                 digits.push_back(ch);
@@ -392,7 +408,6 @@ namespace rx
 
         int base = 10;
         std::size_t start = 0;
-
         if (digits.size() >= 2 && digits[0] == '0') {
             if (digits[1] == 'x') {
                 base = 16;
@@ -415,11 +430,9 @@ namespace rx
 
         value = 0;
         const long long maximum = 4294967295LL;
-
         for (std::size_t i = start; i < digits.size(); ++i) {
             char ch = digits[i];
             int digit = -1;
-
             if (ch >= '0' && ch <= '9') {
                 digit = ch - '0';
             }
@@ -495,8 +508,7 @@ namespace rx
         return &found->second;
     }
 
-    bool SemanticAnalyzer::evaluateConstantExpr(const Expr& expr, const SemType& expected, SemType& actual,
-                                                long long& value) {
+    bool SemanticAnalyzer::evaluateConstantExpr(const Expr& expr, const SemType& expected, SemType& actual, long long& value) {
         if (const auto* literal = dynamic_cast<const IntegerLiteralExpr*>(&expr)) {
             bool hasSuffix = false;
             if (!readInteger(literal->text, value, actual, hasSuffix)) return false;
@@ -505,7 +517,8 @@ namespace rx
         }
         if (const auto* boolean = dynamic_cast<const BooleanLiteralExpr*>(&expr)) {
             actual = boolType();
-            value = boolean->value ? 1 : 0;
+            if (boolean->value) value = 1;
+            else value = 0;
             return true;
         }
 
@@ -541,10 +554,7 @@ namespace rx
         if (constant.state == 3) return false;
 
         if (constant.state == 1) {
-            error(
-                "常量存在循环依赖: " +
-                constant.definition->name
-            );
+            error("常量存在循环依赖: " + constant.definition->name);
             return false;
         }
 
@@ -559,7 +569,6 @@ namespace rx
         }
         constant.type = resolveType(*constant.definition->type);
         bool supported = isInteger(constant.type) || constant.type.kind == TypeKind::Bool;
-
         bool valid = supported;
         if (!supported) {
             error("当前常量初始化只支持整数和 bool");
@@ -588,7 +597,8 @@ namespace rx
             }
         }
         if (valid) constant.value = value;
-        constant.state = valid ? 2 : 3;
+        if (valid) constant.state = 2;
+        else constant.state = 3;
         selfType_ = savedSelf;
         evaluatingConstant_ = savedEvaluation;
         return valid;
@@ -624,15 +634,15 @@ namespace rx
         return info;
     }
 
-    SemType SemanticAnalyzer::checkArguments(const std::vector<SemType>& parameters,
-                                             const std::vector<std::unique_ptr<Expr>>& arguments,
-                                             const SemType& result) {
+    SemType SemanticAnalyzer::checkArguments(const std::vector<SemType>& parameters, const std::vector<std::unique_ptr<Expr>>& arguments, const SemType& result) {
         if (parameters.size() != arguments.size()) {
             error("调用参数数量不匹配");
         }
         bool diverges = false;
         for (std::size_t i = 0; i < arguments.size(); ++i) {
-            const SemType* expected = i < parameters.size() ? &parameters[i] : nullptr;
+            const SemType* expected;
+            if (i < parameters.size()) expected = &parameters[i];
+            else expected = nullptr;
             SemType actual = checkExpr(*arguments[i], expected);
             if (actual.kind == TypeKind::Never) {
                 diverges = true;
@@ -641,17 +651,15 @@ namespace rx
                 error("第 " + std::to_string(i + 1) + " 个参数需要 " + typeName(*expected) + "，实际为 " + typeName(actual));
             }
         }
-        currentType_ = diverges ? neverType() : result;
+        if (diverges) currentType_ = neverType();
+        else currentType_ = result;
         return currentType_;
     }
 
-    SemType SemanticAnalyzer::checkFunctionCall(const FunctionItem& function, const SemType& owner,
-                                                const std::vector<std::unique_ptr<Expr>>& arguments,
-                                                std::size_t firstParameter) {
+    SemType SemanticAnalyzer::checkFunctionCall(const FunctionItem& function, const SemType& owner, const std::vector<std::unique_ptr<Expr>>& arguments, std::size_t firstParameter) {
         SemType savedSelf = selfType_;
         selfType_ = owner;
         std::vector<SemType> parameters;
-
         for (std::size_t i = firstParameter; i < function.parameters.size(); ++i) {
             const auto& parameter = function.parameters[i];
             SemType type;
@@ -669,9 +677,10 @@ namespace rx
             parameters.push_back(type);
         }
 
-        SemType result = function.resultType ? resolveType(*function.resultType) : unitType();
+        SemType result;
+        if (function.resultType) result = resolveType(*function.resultType);
+        else result = unitType();
         selfType_ = savedSelf;
-
         return checkArguments(parameters, arguments, result);
     }
 
@@ -680,10 +689,8 @@ namespace rx
         return supportsTrait(type, trait, visiting);
     }
 
-    bool SemanticAnalyzer::supportsTrait(const SemType& type, const std::string& trait,
-                                         std::unordered_set<const StructItem*>& visiting) {
-        if (isInteger(type) || type.kind == TypeKind::Bool ||
-            type.kind == TypeKind::Unit || type.kind == TypeKind::Never) {
+    bool SemanticAnalyzer::supportsTrait(const SemType& type, const std::string& trait, std::unordered_set<const StructItem*>& visiting) {
+        if (isInteger(type) || type.kind == TypeKind::Bool || type.kind == TypeKind::Unit || type.kind == TypeKind::Never) {
             return true;
         }
         if (type.kind == TypeKind::Ref) {
@@ -755,8 +762,11 @@ namespace rx
     }
 
     void SemanticAnalyzer::visitUnitType(const UnitType&) {}
+
     void SemanticAnalyzer::visitPathType(const PathType&) {}
+
     void SemanticAnalyzer::visitReferenceType(const ReferenceType&) {}
+
     void SemanticAnalyzer::visitArrayType(const ArrayType&) {}
 
     void SemanticAnalyzer::visitIntegerLiteralExpr(const IntegerLiteralExpr& expr) {
@@ -787,7 +797,6 @@ namespace rx
                 info.isPlace = true;
                 info.canWrite = symbol->isMutable;
                 exprInfo_[&expr] = info;
-
                 currentType_ = symbol->type;
                 return;
             }
@@ -805,9 +814,7 @@ namespace rx
         ExprInfo operand = exprInfo_[expr.operand.get()];
         const std::string& op = expr.op;
         SemType scalar = t;
-
-        if (t.kind == TypeKind::Ref && !t.isMutable && t.inner && (isInteger(*t.inner) || t.inner->kind ==
-            TypeKind::Bool)) {
+        if (t.kind == TypeKind::Ref && !t.isMutable && t.inner && (isInteger(*t.inner) || t.inner->kind == TypeKind::Bool)) {
             scalar = *t.inner;
         }
 
@@ -873,7 +880,6 @@ namespace rx
         SemType l = checkExpr(*expr.lhs);
         SemType r = checkExpr(*expr.rhs);
         const std::string& op = expr.op;
-
         if (op == "&&" || op == "||") {
             bool leftValid = l.kind == TypeKind::Bool || l.kind == TypeKind::Never;
             bool rightValid = r.kind == TypeKind::Bool || r.kind == TypeKind::Never;
@@ -882,7 +888,8 @@ namespace rx
                 currentType_ = neverType();
                 return;
             }
-            currentType_ = l.kind == TypeKind::Never ? neverType() : boolType();
+            if (l.kind == TypeKind::Never) currentType_ = neverType();
+            else currentType_ = boolType();
             return;
         }
 
@@ -929,14 +936,11 @@ namespace rx
 
         const SemType* left = &l;
         const SemType* right = &r;
-
-        if (l.kind == TypeKind::Ref && !l.isMutable && l.inner && (isInteger(*l.inner) || l.inner->kind ==
-            TypeKind::Bool)) {
+        if (l.kind == TypeKind::Ref && !l.isMutable && l.inner && (isInteger(*l.inner) || l.inner->kind == TypeKind::Bool)) {
             left = l.inner.get();
         }
 
-        if (r.kind == TypeKind::Ref && !r.isMutable && r.inner && (isInteger(*r.inner) || r.inner->kind ==
-            TypeKind::Bool)) {
+        if (r.kind == TypeKind::Ref && !r.isMutable && r.inner && (isInteger(*r.inner) || r.inner->kind == TypeKind::Bool)) {
             right = r.inner.get();
         }
 
@@ -983,7 +987,6 @@ namespace rx
         const SemType* expected = nullptr;
         if (expr.op == "=") expected = &l;
         SemType r = checkExpr(*expr.rhs, expected);
-
         if (l.kind != TypeKind::Never) {
             if (!left.isPlace) {
                 error("赋值左侧必须是存储位置");
@@ -1001,7 +1004,6 @@ namespace rx
         }
 
         const std::string& op = expr.op;
-
         if (op == "=") {
             if (!canCoerce(l, r)) {
                 error("赋值左右类型不一致");
@@ -1013,7 +1015,6 @@ namespace rx
                 right = right->inner.get();
             }
             bool valid = false;
-
             if (op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=") {
                 valid = isInteger(l) && isInteger(*right) && sameType(l, *right);
             }
@@ -1030,8 +1031,7 @@ namespace rx
     }
 
     void SemanticAnalyzer::visitCastExpr(const CastExpr& expr) {
-        expr.value->accept(*this);
-        SemType from = currentType_;
+        SemType from = checkExpr(*expr.value);
         SemType to = resolveType(*expr.type);
         if (isInteger(from) && isInteger(to)) currentType_ = to;
         else if (from.kind == TypeKind::Bool && isInteger(to)) currentType_ = to;
@@ -1054,7 +1054,6 @@ namespace rx
         }
 
         const Path& path = callee->path;
-
         for (const auto& argument : path.back().args) {
             if (!argument.isLifetime) {
                 error("函数名不能携带类型实参");
@@ -1065,8 +1064,7 @@ namespace rx
             const std::string& name = path.front().name;
             Symbol* function = currentScope().lookup(name);
 
-            if (!function ||
-                function->kind != Symbol::Kind::Func) {
+            if (!function || function->kind != Symbol::Kind::Func) {
                 for (const auto& argument : expr.args) {
                     checkExpr(*argument);
                 }
@@ -1078,15 +1076,15 @@ namespace rx
 
             std::vector<SemType> parameters = function->paramTypes;
             SemType result = function->returnType;
-
             if (expr.args.size() != parameters.size()) {
                 error("函数 " + name + " 参数数量不匹配");
             }
 
             bool diverges = false;
-
             for (std::size_t i = 0; i < expr.args.size(); ++i) {
-                const SemType* expected = i < parameters.size() ? &parameters[i] : nullptr;
+                const SemType* expected;
+                if (i < parameters.size()) expected = &parameters[i];
+                else expected = nullptr;
 
                 SemType actual = checkExpr(*expr.args[i], expected);
                 if (actual.kind == TypeKind::Never) {
@@ -1094,12 +1092,12 @@ namespace rx
                 }
 
                 if (expected && !canCoerce(actual, *expected)) {
-                    error("函数 " + name + " 第 " + std::to_string(i + 1) +
-                        " 个参数需要 " + typeName(*expected) + "，实际为 " + typeName(actual));
+                    error("函数 " + name + " 第 " + std::to_string(i + 1) + " 个参数需要 " + typeName(*expected) + "，实际为 " + typeName(actual));
                 }
             }
 
-            currentType_ = diverges ? neverType() : result;
+            if (diverges) currentType_ = neverType();
+            else currentType_ = result;
             return;
         }
 
@@ -1114,9 +1112,10 @@ namespace rx
 
         SemType receiver = typeFromSegment(path.front());
         const std::string& name = path.back().name;
-
         if (name == "new" && (receiver.kind == TypeKind::Box || receiver.kind == TypeKind::Vec)) {
-            std::size_t count = receiver.kind == TypeKind::Box ? 1 : 0;
+            std::size_t count;
+            if (receiver.kind == TypeKind::Box) count = 1;
+            else count = 0;
             if (expr.args.size() != count) {
                 error("容器构造函数参数数量不匹配");
             }
@@ -1136,24 +1135,21 @@ namespace rx
                     error("Box 构造参数类型不匹配");
                 }
             }
-            currentType_ = diverges ? neverType() : receiver;
+            if (diverges) currentType_ = neverType();
+            else currentType_ = receiver;
             return;
         }
 
-        if (receiver.kind == TypeKind::Vec && (name == "len" || name == "is_empty" || name == "push" || name ==
-            "remove")) {
+        if (receiver.kind == TypeKind::Vec && (name == "len" || name == "is_empty" || name == "push" || name == "remove")) {
             bool mutableReceiver = name == "push" || name == "remove";
-
             SemType reference;
             reference.kind = TypeKind::Ref;
             reference.isMutable = mutableReceiver;
             reference.inner = std::make_shared<SemType>(receiver);
-
             std::vector<SemType> parameters;
             parameters.push_back(reference);
 
             SemType result = unitType();
-
             if (name == "len") {
                 result = usizeType();
             }
@@ -1180,7 +1176,6 @@ namespace rx
         }
         if (name == "clone") {
             const FunctionItem* inherent = nullptr;
-
             if (receiver.kind == TypeKind::Struct) {
                 inherent = findMethod(receiver, name);
             }
@@ -1218,7 +1213,6 @@ namespace rx
         currentType_ = checkFunctionCall(*function, receiver, expr.args, 0);
     }
 
-
     void SemanticAnalyzer::visitMethodCallExpr(const MethodCallExpr& expr) {
         checkExpr(*expr.receiver);
         ExprInfo receiver = exprInfo_[expr.receiver.get()];
@@ -1230,7 +1224,6 @@ namespace rx
         if (expr.method == "clone") {
             ExprInfo candidate = receiver;
             SemType referenceFallback = neverType();
-
             while (candidate.type.kind != TypeKind::Never) {
                 if (candidate.type.kind == TypeKind::Ref && candidate.type.inner) {
                     if (!candidate.type.isMutable) {
@@ -1303,11 +1296,9 @@ namespace rx
         bool empty = expr.method == "is_empty" && target.kind == TypeKind::Vec;
         bool push = expr.method == "push" && target.kind == TypeKind::Vec;
         bool remove = expr.method == "remove" && target.kind == TypeKind::Vec;
-
         if (length || empty || push || remove) {
             std::vector<SemType> parameters;
             SemType result = unitType();
-
             if ((push || remove) && !receiver.canWrite) {
                 error("该容器方法需要可变访问");
             }
@@ -1400,7 +1391,6 @@ namespace rx
 
         SemType expected = usizeType();
         SemType index = checkExpr(*expr.index, &expected);
-
         if (base.type.kind == TypeKind::Never || index.kind == TypeKind::Never) {
             currentType_ = neverType();
             return;
@@ -1430,7 +1420,6 @@ namespace rx
         currentType_ = result.type;
     }
 
-
     int SemanticAnalyzer::readArrayLength(const Expr& expr) {
         SemType expected = usizeType();
         SemType actual;
@@ -1449,14 +1438,11 @@ namespace rx
         return static_cast<int>(value);
     }
 
-
     SemType SemanticAnalyzer::checkExprType(const Expr& expr, const SemType* expected) {
         if (const auto* literal = dynamic_cast<const IntegerLiteralExpr*>(&expr)) {
             bool hasSuffix = false;
-
             for (const std::string suffix : {"i32", "u32", "isize", "usize"}) {
-                if (literal->text.size() >= suffix.size() &&
-                    literal->text.compare(literal->text.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                if (literal->text.size() >= suffix.size() && literal->text.compare(literal->text.size() - suffix.size(), suffix.size(), suffix) == 0) {
                     hasSuffix = true;
                     break;
                 }
@@ -1478,7 +1464,6 @@ namespace rx
             }
 
             int count = static_cast<int>(array->elements.size());
-
             if (array->repeat) {
                 count = readArrayLength(*array->repeat);
                 if (array->elements.size() != 1) {
@@ -1488,7 +1473,6 @@ namespace rx
 
             for (const auto& element : array->elements) {
                 SemType elementType = checkExpr(*element, result.inner.get());
-
                 if (!result.inner) {
                     result.inner = std::make_shared<SemType>(elementType);
                 }
@@ -1533,12 +1517,12 @@ namespace rx
                 error("if 条件必须是 bool");
             }
 
-            const SemType* branchExpected = conditional->elseBranch ? expected : nullptr;
+            const SemType* branchExpected;
+            if (conditional->elseBranch) branchExpected = expected;
+            else branchExpected = nullptr;
 
             SemType thenType = checkExpr(*conditional->thenBranch, branchExpected);
-
             SemType result;
-
             if (conditional->elseBranch) {
                 SemType elseType = checkExpr(*conditional->elseBranch, expected);
                 if (!mergeTypes(thenType, elseType, result)) {
@@ -1567,14 +1551,14 @@ namespace rx
             loops_.push_back(context);
 
             SemType bodyType = checkExpr(*loop->body);
-
             if (bodyType.kind != TypeKind::Unit && bodyType.kind != TypeKind::Never) {
                 error("loop 的循环体必须产生 ()");
             }
 
             LoopContext finished = loops_.back();
             loops_.pop_back();
-            currentType_ = finished.hasBreak ? finished.breakType : neverType();
+            if (finished.hasBreak) currentType_ = finished.breakType;
+            else currentType_ = neverType();
             ExprInfo info;
             info.type = currentType_;
             info.blocked = finished.blockedResult;
@@ -1588,13 +1572,11 @@ namespace rx
         return currentType_;
     }
 
-    SemType SemanticAnalyzer::checkExpr(const Expr& expr, const SemType* expected
-    ) {
+    SemType SemanticAnalyzer::checkExpr(const Expr& expr, const SemType* expected) {
         exprInfo_.erase(&expr);
         SemType type = checkExprType(expr, expected);
         ExprInfo info;
         auto recorded = exprInfo_.find(&expr);
-
         if (recorded != exprInfo_.end()) {
             info = recorded->second;
         }
@@ -1632,8 +1614,7 @@ namespace rx
             }
         }
 
-        if (expected && expected->kind == TypeKind::Ref && expected->isMutable &&
-            type.kind == TypeKind::Ref && type.isMutable && info.blocked) {
+        if (expected && expected->kind == TypeKind::Ref && expected->isMutable && type.kind == TypeKind::Ref && type.isMutable && info.blocked) {
             error("该表达式不能提供可变引用访问");
         }
         exprInfo_[&expr] = info;
@@ -1644,29 +1625,22 @@ namespace rx
     SemType SemanticAnalyzer::checkBlockBody(const Block& block, const SemType* expected) {
         SemType result = unitType();
         bool canReachEnd = true;
-
         for (std::size_t i = 0; i < block.statements.size(); ++i) {
             const Stmt& statement = *block.statements[i];
             const auto* expressionStatement = dynamic_cast<const ExprStmt*>(&statement);
             SemType statementType;
-
             if (expressionStatement) {
-                bool isTail = i + 1 == block.statements.size() && !block.tail &&
-                    !expressionStatement->hasSemicolon;
+                bool isTail = i + 1 == block.statements.size() && !block.tail && !expressionStatement->hasSemicolon;
+                const SemType* statementExpected = nullptr;
+                if (isTail) statementExpected = expected;
+                statementType = checkExpr(*expressionStatement->expression, statementExpected);
 
-                statementType = checkExpr(
-                    *expressionStatement->expression,
-                    isTail ? expected : nullptr
-                );
-
-                if (!isTail &&
-                    !expressionStatement->hasSemicolon &&
-                    statementType.kind != TypeKind::Unit &&
-                    statementType.kind != TypeKind::Never) {
+                if (!isTail && !expressionStatement->hasSemicolon && statementType.kind != TypeKind::Unit && statementType.kind != TypeKind::Never) {
                     error("作为语句的块表达式必须产生 ()");
                 }
 
-                result = isTail ? statementType : unitType();
+                if (isTail) result = statementType;
+                else result = unitType();
             }
             else {
                 statement.accept(*this);
@@ -1700,14 +1674,12 @@ namespace rx
             }
         }
         std::unordered_set<std::string> provided;
-
         for (std::size_t i = 0; i < expr.fields.size(); ++i) {
             const std::string& name = expr.fields[i];
             auto expectedField = fields.find(name);
             const SemType* expectedType = nullptr;
             if (expectedField != fields.end()) expectedType = &expectedField->second;
             SemType valueType = checkExpr(*expr.values[i], expectedType);
-
             if (!provided.insert(name).second) {
                 error("重复初始化字段: " + name);
             }
@@ -1717,11 +1689,7 @@ namespace rx
                 continue;
             }
             if (!sameType(field->second, valueType)) {
-                error(
-                    "字段 " + name +
-                    " 需要 " + typeName(field->second) +
-                    "，实际为 " + typeName(valueType)
-                );
+                error("字段 " + name + " 需要 " + typeName(field->second) + "，实际为 " + typeName(valueType));
             }
         }
         for (const auto& field : st.structDef->fields) {
@@ -1739,7 +1707,6 @@ namespace rx
     void SemanticAnalyzer::visitLoopExpr(const LoopExpr& expr) {
         currentType_ = checkExpr(expr);
     }
-
 
     void SemanticAnalyzer::visitWhileExpr(const WhileExpr& expr) {
         std::vector<LoopContext> outerLoops = std::move(loops_);
@@ -1761,7 +1728,8 @@ namespace rx
         }
 
         loops_.pop_back();
-        currentType_ = condition.kind == TypeKind::Never ? neverType() : unitType();
+        if (condition.kind == TypeKind::Never) currentType_ = neverType();
+        else currentType_ = unitType();
     }
 
     void SemanticAnalyzer::visitBreakExpr(const BreakExpr& expr) {
@@ -1775,15 +1743,14 @@ namespace rx
         }
 
         std::size_t target = loops_.size() - 1;
-
         bool allowsValue = loops_[target].allowsValue;
         bool hasExpected = loops_[target].hasExpected;
         SemType expected = loops_[target].expected;
-
         SemType valueType = unitType();
-
         if (expr.value) {
-            valueType = checkExpr(*expr.value, hasExpected ? &expected : nullptr);
+            const SemType* valueExpected = nullptr;
+            if (hasExpected) valueExpected = &expected;
+            valueType = checkExpr(*expr.value, valueExpected);
         }
 
         if (expr.value && !allowsValue) error("while 中的 break 不能携带值");
@@ -1806,9 +1773,7 @@ namespace rx
             }
         }
         if (expr.value && valueType.kind == TypeKind::Ref) {
-            loops_[target].blockedResult =
-                loops_[target].blockedResult ||
-                exprInfo_[expr.value.get()].blocked;
+            loops_[target].blockedResult = loops_[target].blockedResult || exprInfo_[expr.value.get()].blocked;
         }
         currentType_ = neverType();
     }
@@ -1819,8 +1784,7 @@ namespace rx
             valueType = checkExpr(*expr.value, &returnType_);
         }
         if (valueType.kind != TypeKind::Never && !sameType(valueType, returnType_))
-            error(
-                "返回值需要 " + typeName(returnType_) + "，实际为 " + typeName(valueType));
+        error("返回值需要 " + typeName(returnType_) + "，实际为 " + typeName(valueType));
         currentType_ = neverType();
     }
 
@@ -1844,7 +1808,6 @@ namespace rx
 
         SemType declared;
         const SemType* expected = nullptr;
-
         if (stmt.type) {
             declared = resolveType(*stmt.type);
             expected = &declared;
@@ -1855,7 +1818,6 @@ namespace rx
             error("该初始化表达式不能提供可变引用");
         }
         SemType bindingType = initial;
-
         if (expected) {
             if (initial.kind != TypeKind::Never && !sameType(declared, initial)) {
                 error("变量 " + stmt.name + " 需要 " + typeName(declared) + "，实际为 " + typeName(initial));
@@ -1871,12 +1833,14 @@ namespace rx
             currentScope().insert(stmt.name, std::move(symbol));
         }
 
-        currentType_ = initial.kind == TypeKind::Never ? neverType() : unitType();
+        if (initial.kind == TypeKind::Never) currentType_ = neverType();
+        else currentType_ = unitType();
     }
 
     void SemanticAnalyzer::visitExprStmt(const ExprStmt& stmt) {
         SemType type = checkExpr(*stmt.expression);
-        currentType_ = type.kind == TypeKind::Never ? neverType() : unitType();
+        if (type.kind == TypeKind::Never) currentType_ = neverType();
+        else currentType_ = unitType();
     }
 
     void SemanticAnalyzer::visitEmptyStmt(const EmptyStmt&) {}
@@ -1887,7 +1851,6 @@ namespace rx
 
     void SemanticAnalyzer::visitStructItem(const StructItem& item) {
         std::unordered_set<std::string> names;
-
         for (const auto& field : item.fields) {
             if (!names.insert(field.name).second) {
                 error("结构体 " + item.name + " 重复定义字段: " + field.name);
@@ -1899,18 +1862,15 @@ namespace rx
         type.structDef = &item;
         checkLayout(type);
         std::unordered_set<std::string> requested;
-
         for (const auto& attribute : item.attributes) {
             if (!requested.insert(attribute).second) {
                 error("重复的派生能力: " + attribute);
             }
         }
-        if (requested.find("Copy") != requested.end() &&
-            requested.find("Clone") == requested.end()) {
+        if (requested.find("Copy") != requested.end() && requested.find("Clone") == requested.end()) {
             error("派生 Copy 必须同时显式派生 Clone");
         }
-        if (requested.find("Eq") != requested.end() &&
-            requested.find("PartialEq") == requested.end()) {
+        if (requested.find("Eq") != requested.end() && requested.find("PartialEq") == requested.end()) {
             error("派生 Eq 必须同时显式派生 PartialEq");
         }
         for (const auto& trait : requested) {
@@ -1922,10 +1882,9 @@ namespace rx
 
     void SemanticAnalyzer::visitFunctionItem(const FunctionItem& item) {
         SemType savedReturn = returnType_;
-        returnType_ = item.resultType ? resolveType(*item.resultType) : unitType();
-
+        if (item.resultType) returnType_ = resolveType(*item.resultType);
+        else returnType_ = unitType();
         scopes_.emplace_back(&currentScope());
-
         std::unordered_set<std::string> parameterNames;
         for (const auto& p : item.parameters) {
             if (!parameterNames.insert(p.name).second) {
@@ -1955,11 +1914,8 @@ namespace rx
         }
 
         SemType bodyType = checkBlockBody(*item.body, &returnType_);
-
         if (bodyType.kind != TypeKind::Never && !sameType(bodyType, returnType_))
-            error(
-                "函数 " + item.name + " 需要返回 " + typeName(returnType_) + "，函数体结果为 " + typeName(bodyType));
-
+        error("函数 " + item.name + " 需要返回 " + typeName(returnType_) + "，函数体结果为 " + typeName(bodyType));
         scopes_.pop_back();
         returnType_ = savedReturn;
         currentType_ = unitType();
@@ -2017,7 +1973,6 @@ namespace rx
         }
         if (state == 2) return true;
         if (state == 3) return false;
-
         layoutState_[definition] = 1;
         SemType savedSelf = selfType_;
         selfType_ = type;
@@ -2029,7 +1984,8 @@ namespace rx
             }
         }
         selfType_ = savedSelf;
-        layoutState_[definition] = valid ? 2 : 3;
+        if (valid) layoutState_[definition] = 2;
+        else layoutState_[definition] = 3;
         return valid;
     }
 }

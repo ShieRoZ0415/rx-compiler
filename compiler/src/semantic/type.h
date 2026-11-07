@@ -8,20 +8,8 @@
 namespace rx
 {
     enum class TypeKind {
-        Int,
-        Uint,
-        Isize,
-        Usize,
-        Bool,
-        Unit,
-        Never,
-        Struct,
-        Ref,
-        Array,
-        Box,
-        Vec
+        Int, Uint, Isize, Usize, Bool, Unit, Never, Struct, Ref, Array, Box, Vec
     };
-
     struct SemType {
         TypeKind kind = TypeKind::Unit;
         const StructItem* structDef = nullptr;
@@ -42,6 +30,6 @@ namespace rx
     bool isCopy(const SemType& type);
     bool sameType(const SemType& a, const SemType& b);
     bool canCoerce(const SemType& actual, const SemType& expected);
-    bool mergeTypes(const SemType& first,const SemType& second,SemType& result);
+    bool mergeTypes(const SemType& first, const SemType& second, SemType& result);
     std::string typeName(const SemType& type);
 }

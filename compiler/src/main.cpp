@@ -2,12 +2,14 @@
 #include <memory>
 #include <string>
 #include <fstream>
+#include <sstream>
 
 #include "antlr4-runtime.h"
 #include "RxLexer.h"
 #include "RxParser.h"
 #include "ast_builder.h"
 #include "semantic/analyzer.h"
+#include "ir/generator.h"
 
 namespace
 {
@@ -372,11 +374,19 @@ namespace
 int main(int argc, char** argv) {
     std::string stage = "dump";
     std::string filename;
+    std::string outputFilename;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--stage" && i + 1 < argc) {
             stage = argv[++i];
+        }
+        else if (arg == "-o" || arg == "--output") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing output filename.\n";
+                return 1;
+            }
+            outputFilename = argv[++i];
         }
         else if (!arg.empty() && arg[0] != '-') {
             filename = arg;
@@ -422,9 +432,31 @@ fn main() {
     rx::ASTBuilder builder;
     auto ast = builder.buildCrate(tree);
 
-    if (stage == "semantic") {
+    if (stage == "semantic" || stage == "ir") {
         rx::SemanticAnalyzer analyzer;
-        return analyzer.run(*ast) ? 0 : 1;
+        if (!analyzer.run(*ast)) return 1;
+        if (stage == "semantic") return 0;
+
+        rx::IRGenerator generator;
+        std::ostringstream ir;
+        if (!generator.run(*ast, analyzer, ir)) return 1;
+
+        if (outputFilename.empty()) {
+            std::cout << ir.str();
+        }
+        else {
+            std::ofstream output(outputFilename);
+            if (!output) {
+                std::cerr << "Cannot open output file: " << outputFilename << "\n";
+                return 1;
+            }
+            output << ir.str();
+            if (!output) {
+                std::cerr << "Cannot write output file: " << outputFilename << "\n";
+                return 1;
+            }
+        }
+        return 0;
     }
 
     PrintVisitor printer(std::cout);

@@ -11,8 +11,7 @@ namespace rx
     SemType neverType() { SemType t; t.kind = TypeKind::Never; return t; }
 
     bool isInteger(const SemType& type) {
-        return type.kind == TypeKind::Int || type.kind == TypeKind::Uint
-            || type.kind == TypeKind::Isize || type.kind == TypeKind::Usize;
+        return type.kind == TypeKind::Int || type.kind == TypeKind::Uint || type.kind == TypeKind::Isize || type.kind == TypeKind::Usize;
     }
 
     bool isCopy(const SemType& type) {
@@ -58,29 +57,26 @@ namespace rx
         if (sameType(actual, expected)) return true;
         if (actual.kind == TypeKind::Never) return true;
 
-        if (actual.kind != TypeKind::Ref ||expected.kind != TypeKind::Ref ||
-            !actual.inner || !expected.inner) {
+        if (actual.kind != TypeKind::Ref || expected.kind != TypeKind::Ref || !actual.inner || !expected.inner) {
             return false;
-            }
+        }
         if (expected.isMutable && !actual.isMutable) return false;
 
         const SemType* source = actual.inner.get();
-
         while (true) {
             if (sameType(*source, *expected.inner)) return true;
 
             if (source->kind == TypeKind::Box && source->inner) {
                 source = source->inner.get();
             }
-            else if (source->kind == TypeKind::Ref && source->inner &&
-                     (!expected.isMutable || source->isMutable)) {
+            else if (source->kind == TypeKind::Ref && source->inner && (!expected.isMutable || source->isMutable)) {
                 source = source->inner.get();
-                     }
+            }
             else return false;
         }
     }
 
-    bool mergeTypes(const SemType& first,const SemType& second,SemType& result) {
+    bool mergeTypes(const SemType& first, const SemType& second, SemType& result) {
         if (canCoerce(first, second)) {
             result = second;
             return true;

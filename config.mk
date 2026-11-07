@@ -3,15 +3,13 @@
 # Optional: build your compiler once before testing. Leave empty if prebuilt.
 # {runtime} will be linked into every program.
 # Write shared runtime assembly there if your IR/CODEGEN output references it.
-BUILD = cmake --build compiler/build && : > {runtime}
+BUILD = cmake -S compiler -B compiler/build -DCMAKE_BUILD_TYPE=Release && cmake --build compiler/build -j2 && : > {runtime}
 
 # Required for semantic tests: exit 0 to accept {source}, 1 to reject it.
 SEMANTIC = compiler/build/compiler --stage semantic {source}
 
 # Required for IR tests: write RV32 LLVM IR to {output} (.ll).
-IR = RUST_MIN_STACK=16777216 RX_SOURCE={source} $(REFERENCE_RUSTC) --crate-type=staticlib \
-    --emit=llvm-ir={output},link={output}.a -C opt-level=2 -C lto=fat \
-    crates/rx/src/entry.rs
+IR = compiler/build/compiler --stage ir {source} -o {output}
 
 # Required for codegen/optimization tests: write RV32IM assembly to {output} (.s).
 CODEGEN = RUST_MIN_STACK=16777216 RX_SOURCE={source} $(REFERENCE_RUSTC) --crate-type=staticlib \

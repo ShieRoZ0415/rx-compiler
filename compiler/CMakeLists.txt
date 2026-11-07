@@ -34,6 +34,11 @@ add_executable(
         src/semantic/symbol.cpp
         src/semantic/analyzer.h
         src/semantic/analyzer.cpp
+
+        src/ir/ir.h
+        src/ir/ir.cpp
+        src/ir/generator.h
+        src/ir/generator.cpp
 )
 
 

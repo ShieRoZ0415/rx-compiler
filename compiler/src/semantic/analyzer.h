@@ -17,15 +17,15 @@ namespace rx
         bool run(Crate& crate);
         bool ok() const { return errorCount_ == 0; }
 
+        const SemType* expressionType(const Expr& expr) const;
+        bool constantValue(const std::string& key, SemType& type, long long& value) const;
+        const SemType* resolvedType(const Type& type) const;
     private:
         std::deque<Scope> scopes_;
-
         SemType currentType_;
         int errorCount_ = 0;
-
         SemType returnType_ = unitType();
         SemType selfType_ = neverType();
-
         struct LoopContext {
             bool allowsValue = true;
             bool hasBreak = false;
@@ -35,14 +35,10 @@ namespace rx
             SemType breakType = neverType();
         };
         std::vector<LoopContext> loops_;
-
         std::unordered_map<std::string, std::vector<const FunctionItem*>> methods_;
-
         std::unordered_map<const StructItem*, int> layoutState_;
         bool checkLayout(const SemType& type);
-
         std::unordered_map<std::string, Symbol> structTypes_;
-
         struct ConstantInfo {
             const ConstItem* definition = nullptr;
             const StructItem* owner = nullptr;
@@ -52,25 +48,12 @@ namespace rx
         };
         std::unordered_map<std::string, ConstantInfo> constants_;
         bool evaluatingConstant_ = false;
-
-        bool readInteger(
-            const std::string& text,
-            long long& value,
-            SemType& type,
-            bool& hasSuffix
-        );
-
+        bool readInteger(const std::string& text, long long& value, SemType& type, bool& hasSuffix);
         ConstantInfo* findConstant(const Path& path);
 
         bool evaluateConstant(ConstantInfo& constant);
 
-        bool evaluateConstantExpr(
-            const Expr& expr,
-            const SemType& expected,
-            SemType& actual,
-            long long& value
-        );
-
+        bool evaluateConstantExpr(const Expr& expr, const SemType& expected, SemType& actual, long long& value);
         struct ExprInfo {
             SemType type;
             bool isPlace = false;
@@ -79,12 +62,11 @@ namespace rx
         };
         std::unordered_map<const Expr*, ExprInfo> exprInfo_;
         ExprInfo dereference(ExprInfo info);
-        SemType checkExprType(const Expr& expr,const SemType* expected);
-        SemType checkArguments(const std::vector<SemType>& parameters,const std::vector<std::unique_ptr<Expr>>& arguments,const SemType& result);
-        SemType checkFunctionCall(const FunctionItem& function,const SemType& owner,const std::vector<std::unique_ptr<Expr>>& arguments,std::size_t firstParameter);
-        bool supportsTrait(const SemType& type,const std::string& trait);
-        bool supportsTrait(const SemType& type,const std::string& trait,std::unordered_set<const StructItem*>& visiting);
-
+        SemType checkExprType(const Expr& expr, const SemType* expected);
+        SemType checkArguments(const std::vector<SemType>& parameters, const std::vector<std::unique_ptr<Expr>>& arguments, const SemType& result);
+        SemType checkFunctionCall(const FunctionItem& function, const SemType& owner, const std::vector<std::unique_ptr<Expr>>& arguments, std::size_t firstParameter);
+        bool supportsTrait(const SemType& type, const std::string& trait);
+        bool supportsTrait(const SemType& type, const std::string& trait, std::unordered_set<const StructItem*>& visiting);
         Scope& currentScope() { return scopes_.back(); }
         void error(const std::string& message);
         SemType resolveType(const Type& type);
@@ -93,9 +75,11 @@ namespace rx
         const FunctionItem* findMethod(const SemType& receiver, const std::string& name);
         SemType findField(const SemType& receiver, const std::string& name, bool* found);
         bool checkArgs(const FunctionItem& fn, const std::vector<SemType>& args);
-        SemType checkExpr(const Expr& expr,const SemType* expected = nullptr);
+        SemType checkExpr(const Expr& expr, const SemType* expected = nullptr);
         int readArrayLength(const Expr& expr);
         SemType checkBlockBody(const Block& block, const SemType* expected = nullptr);
+        std::unordered_map<const Type*, SemType> resolvedTypes_;
+        SemType resolveTypeImpl(const Type& type);
 
         void visitCrate(const Crate&) override;
         void visitBlock(const Block&) override;
